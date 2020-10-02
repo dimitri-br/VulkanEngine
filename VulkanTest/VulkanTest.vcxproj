@@ -124,7 +124,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>C:\Users\Dbgamerstarz\Documents\Visual Studio 2019\Libraries\glm;C:\Users\Dbgamerstarz\Documents\Visual Studio 2019\Libraries\glfw-3.3.2.bin.WIN64\include;C:\VulkanSDK\1.2.148.1\Include;C:\Users\Dbgamerstarz\Documents\Visual Studio 2019\Libraries\stb-master;C:\Users\Dbgamerstarz\Documents\Visual Studio 2019\Libraries\other\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Users\Dbgamerstarz\Documents\Visual Studio 2019\Libraries\glm;C:\Users\Dbgamerstarz\Documents\Visual Studio 2019\Libraries\glfw-3.3.2.bin.WIN64\include;C:\VulkanSDK\1.2.148.1\Include;C:\Users\Dbgamerstarz\Documents\Visual Studio 2019\Libraries\stb-master;C:\Users\Dbgamerstarz\Documents\Visual Studio 2019\Libraries\other\include;C:\Users\Dbgamerstarz\source\repos\VulkanEngine\VulkanTest\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
@@ -142,7 +142,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>C:\Users\Dbgamerstarz\Documents\Visual Studio 2019\Libraries\glm;C:\Users\Dbgamerstarz\Documents\Visual Studio 2019\Libraries\glfw-3.3.2.bin.WIN64\include;C:\VulkanSDK\1.2.148.1\Include;C:\Users\Dbgamerstarz\Documents\Visual Studio 2019\Libraries\stb-master;C:\Users\Dbgamerstarz\Documents\Visual Studio 2019\Libraries\other\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Users\Dbgamerstarz\Documents\Visual Studio 2019\Libraries\glm;C:\Users\Dbgamerstarz\Documents\Visual Studio 2019\Libraries\glfw-3.3.2.bin.WIN64\include;C:\VulkanSDK\1.2.148.1\Include;C:\Users\Dbgamerstarz\Documents\Visual Studio 2019\Libraries\stb-master;C:\Users\Dbgamerstarz\Documents\Visual Studio 2019\Libraries\other\include;C:\Users\Dbgamerstarz\source\repos\VulkanEngine\VulkanTest\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>

@@ -14,6 +14,10 @@ layout(binding = 2) uniform Material{
     vec3 color;
 } mat;
 
+layout(binding = 3) uniform Transform{
+    mat4 transform;
+
+} trans;
 
 layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec3 inColor;
@@ -29,13 +33,18 @@ layout(location = 5) out vec3 viewPos;
 layout(location = 6) out float shininess;
 
 void main() {
-    gl_Position = ubo.proj * ubo.view * ubo.model * vec4(inPosition, 1.0);
+
+    vec4 pos =  ubo.proj * ubo.view * trans.transform * ubo.model * vec4(inPosition, 1.0);
+    
+    
+
+    gl_Position = pos;
 
     // exports
     fragColor = mat.color;
     fragTexCoord = inTexCoord;
-    Normal = mat3(transpose(inverse(ubo.model))) * vNormal;
-    FragPos = vec3(ubo.model * vec4(inPosition, 1.0));
+    Normal = mat3(transpose(inverse(trans.transform))) * vNormal;
+    FragPos = vec3(trans.transform * vec4(inPosition, 1.0));
     lightPos = ubo.lightPos;
     viewPos = ubo.camPos;
     shininess = mat.shininess;
