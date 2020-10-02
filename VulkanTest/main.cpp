@@ -31,7 +31,7 @@ const uint32_t HEIGHT = 1080;
 const bool FULLSCREEN = true;
 
 // base names to help customize later
-const std::string MODEL_PATH = "models/model.obj";
+const std::string MODEL_PATH = "models/cube.obj";
 const std::string TEXTURE_PATH = "textures/texture.png";
 
 // (Z, X, Y)
@@ -173,8 +173,15 @@ struct UniformBufferObject {
     alignas(16) glm::vec3 camPos;
 };
 
+// Material information - holds info for the shader
 struct Material {
     alignas(16) float shininess;
+    alignas(16) glm::vec3 color;
+};
+
+// Holds descriptor set, material data and vertex data. Will be extended
+struct Object {
+
 };
 
 // Pos, then Color
@@ -487,6 +494,7 @@ private:
         imagesInFlight[imageIndex] = inFlightFences[currentFrame];
 
         updateUniformBuffer(imageIndex);
+        updateMaterialBuffer(imageIndex);
 
         // To submit to the command buffer, we need to create submit info
         VkSubmitInfo submitInfo{};
@@ -582,11 +590,13 @@ private:
         Material mat{};
 
         mat.shininess = 1.0f;
+        mat.color = { 1.0f, 1.0f, 1.0f };
+
 
         // write material to memory
-        void* dataM;
-        vkMapMemory(device, materialBuffersMemory[currentImage], 0, sizeof(mat), 0, &dataM);
-        memcpy(dataM, &mat, sizeof(mat));
+        void* data;
+        vkMapMemory(device, materialBuffersMemory[currentImage], 0, sizeof(mat), 0, &data);
+        memcpy(data, &mat, sizeof(mat));
         vkUnmapMemory(device, materialBuffersMemory[currentImage]);
     }
 
@@ -694,9 +704,9 @@ private:
         appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
         appInfo.pApplicationName = "Hello Triangle";
         appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
-        appInfo.pEngineName = "No Engine";
+        appInfo.pEngineName = "VulkanEngine";
         appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
-        appInfo.apiVersion = VK_API_VERSION_1_0;
+        appInfo.apiVersion = VK_API_VERSION_1_2;
 
         VkInstanceCreateInfo createInfo{};
         createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
@@ -976,7 +986,8 @@ private:
         poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         poolSizes[1].descriptorCount = static_cast<uint32_t>(swapChainImages.size());
 
-
+        poolSizes[2].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        poolSizes[2].descriptorCount = static_cast<uint32_t>(swapChainImages.size());
 
         // we must specify the max amount of descriptor sets that can be allocated
         VkDescriptorPoolCreateInfo poolInfo{};
@@ -1018,8 +1029,13 @@ private:
             imageInfo.imageView = textureImageView;
             imageInfo.sampler = textureSampler;
 
+            VkDescriptorBufferInfo matBufferInfo{};
+            matBufferInfo.buffer = materialBuffers[i];
+            matBufferInfo.offset = 0;
+            matBufferInfo.range = sizeof(Material);
+
             // create an array to store our descriptor sets
-            std::array<VkWriteDescriptorSet, 2> descriptorWrites{};
+            std::array<VkWriteDescriptorSet, 3> descriptorWrites{};
 
             descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             descriptorWrites[0].dstSet = descriptorSets[i]; // the set to write to ( we jave one for each frame in the swapchain)
@@ -1037,7 +1053,13 @@ private:
             descriptorWrites[1].descriptorCount = 1;
             descriptorWrites[1].pImageInfo = &imageInfo; // the image (the image sampler) to put in the set
 
-           
+            descriptorWrites[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            descriptorWrites[2].dstSet = descriptorSets[i]; // the set to write to ( we jave one for each frame in the swapchain)
+            descriptorWrites[2].dstBinding = 2;// the binding in the shader
+            descriptorWrites[2].dstArrayElement = 0;
+            descriptorWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            descriptorWrites[2].descriptorCount = 1;
+            descriptorWrites[2].pBufferInfo = &matBufferInfo; // the buffer to put in the set
             
             // Update descriptor sets on the device
             vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
@@ -1062,7 +1084,14 @@ private:
         samplerLayoutBinding.pImmutableSamplers = nullptr;
         samplerLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT; // When we will use it - the frag shader
 
-        std::array<VkDescriptorSetLayoutBinding, 2> bindings = { uboLayoutBinding, samplerLayoutBinding,  }; // create an array of our bindings
+        VkDescriptorSetLayoutBinding matLayoutBinding{};
+        matLayoutBinding.binding = 2;
+        matLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER; // define it is a uniform buffer
+        matLayoutBinding.descriptorCount = 1;
+        matLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT; // what stage it will be used on
+        matLayoutBinding.pImmutableSamplers = nullptr; // Optional - useful for images
+
+        std::array<VkDescriptorSetLayoutBinding, 3> bindings = { uboLayoutBinding, samplerLayoutBinding, matLayoutBinding }; // create an array of our bindings
 
         // create the descriptor set, take the bindings needed.
         VkDescriptorSetLayoutCreateInfo layoutInfo{};
@@ -1925,7 +1954,7 @@ private:
     }
 
     void createMaterialBuffers() {
-       /* VkDeviceSize bufferSize = sizeof(Material);
+       VkDeviceSize bufferSize = sizeof(Material);
 
         materialBuffers.resize(swapChainImages.size());
         materialBuffersMemory.resize(swapChainImages.size());
@@ -1933,7 +1962,7 @@ private:
         for (size_t i = 0; i < swapChainImages.size(); i++) {
             // Create a buffer. We don't use staging as we want to be able to modify this buffer. We will also send data to the memory when we modify it in the drawFrame, so no need to memcpy
             createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, materialBuffers[i], materialBuffersMemory[i]);
-        }*/
+        }
         
     }
     
@@ -2088,10 +2117,10 @@ private:
 
         vkDestroySwapchainKHR(device, swapChain, nullptr);
 
-        /*for (size_t i = 0; i < swapChainImages.size(); i++) {
+        for (size_t i = 0; i < swapChainImages.size(); i++) {
             vkDestroyBuffer(device, materialBuffers[i], nullptr);
             vkFreeMemory(device, materialBuffersMemory[i], nullptr);
-        }*/
+        }
 
        for (size_t i = 0; i < swapChainImages.size(); i++) {
             vkDestroyBuffer(device, uniformBuffers[i], nullptr);
@@ -2300,9 +2329,6 @@ private:
 
         return requiredExtensions.empty();
     }
-
-
-
 };
 
 int main() {

@@ -2,10 +2,6 @@
 #extension GL_ARB_separate_shader_objects : enable
 
 layout(binding = 1) uniform sampler2D texSampler;
-// TODO - Add this as a parameter, rather than hardcode
-layout(binding = 2) uniform Material{
-    float shininess;
-} mat;
 
 layout(location = 0) in vec3 fragColor;
 layout(location = 1) in vec2 fragTexCoord;
@@ -13,6 +9,7 @@ layout(location = 2) in vec3 Normal;
 layout(location = 3) in vec3 FragPos;
 layout(location = 4) in vec3 lightPos;
 layout(location = 5) in vec3 viewPos;
+layout(location = 6) in float shininess;
 
 
 layout(location = 0) out vec4 outColor;
@@ -21,7 +18,7 @@ void main() {
     // Define any constants here
     //vec3 lightPos = vec3(-4.0, 0.0, -5.0);
     vec3 lightColor = vec3(1.0, 1.0, 1.0);
-    float specularStrength = 1.0f;
+    float specularStrength = shininess;
 
     // Normalize the normal ()
     vec3 norm = normalize(Normal);
