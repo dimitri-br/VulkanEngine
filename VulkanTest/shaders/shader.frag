@@ -1,11 +1,7 @@
 #version 450
-#extension GL_ARB_separate_shader_objects : enable
 
 layout(binding = 1) uniform sampler2D texSampler;
-// TODO - Add this as a parameter, rather than hardcode
-layout(binding = 2) uniform Material{
-    float shininess;
-} mat;
+layout(binding = 4) uniform sampler2D shadowMap;
 
 layout(location = 0) in vec3 fragColor;
 layout(location = 1) in vec2 fragTexCoord;
@@ -13,34 +9,103 @@ layout(location = 2) in vec3 Normal;
 layout(location = 3) in vec3 FragPos;
 layout(location = 4) in vec3 lightPos;
 layout(location = 5) in vec3 viewPos;
-
+layout(location = 6) in float shininess;
+layout (location = 7) in vec3 inLightVec;
+layout (location = 8) in vec4 inShadowCoord;
+layout (location = 9) in vec3 inViewVec;
 
 layout(location = 0) out vec4 outColor;
 
-void main() {
-    // Define any constants here
-    //vec3 lightPos = vec3(-4.0, 0.0, -5.0);
-    vec3 lightColor = vec3(1.0, 1.0, 1.0);
-    float specularStrength = 1.0f;
+#define ambient 0.003
 
-    // Normalize the normal ()
-    vec3 norm = normalize(Normal);
+const mat4 depthBias = mat4( 
+	0.5, 0.0, 0.0, 0.0,
+	0.0, 0.5, 0.0, 0.0,
+	0.0, 0.0, 1.0, 0.0,
+	0.5, 0.5, 0.0, 1.0 );
+float CalcShadowFactor(vec4 lightspace_Position)
+{
 
-    // Get the light direction ( to travel to)
-    vec3 lightDir = normalize(lightPos - FragPos); 
+    vec4 ProjectionCoords = vec4(lightspace_Position.xyz / lightspace_Position.w, 1.0f);
 
-    float diff = max(dot(norm, lightDir), 0.0);
-    vec3 diffuse = diff * lightColor;
+    vec4 projCoords = depthBias * ProjectionCoords;
 
-    // Calculate specular
-    vec3 viewDir = normalize(viewPos - FragPos);
-    vec3 reflectDir = reflect(-lightDir, norm);  
 
-    float spec = pow(max(dot(viewDir, reflectDir), 0.0), 32);
-    vec3 specular = specularStrength * spec * lightColor; 
 
-    float ambientStrength = 0.1;
-    vec3 ambient = ambientStrength * lightColor;
-    vec3 result = (ambient + diffuse + specular) * fragColor;
-    outColor = vec4(result * texture(texSampler, fragTexCoord).rgb, 1.0);
+    if(texture(shadowMap, projCoords.xy).r < projCoords.z) return 0.5;
+    else return 1.0;
+}
+
+float CalcShadow(){
+    float closestDepth = shadow2DProj(shadowMap, ShadowCoords).r;
+    float bias = 0.005;
+    float currentDepth = ShadowCoords.z;
+    float shadow = currentDepth - bias > closestDepth ? 1.0 : 0.0;
+    return shadow;
+}
+
+float textureProj(vec4 shadowCoord, vec2 off)
+{
+	float shadow = 1.0;
+	if ( shadowCoord.z > -1.0 && shadowCoord.z < 1.0 ) 
+	{
+		float dist = texture( shadowMap, shadowCoord.st + off ).r;
+		if ( shadowCoord.w > 0.0 && dist < shadowCoord.z ) 
+		{
+			shadow = ambient;
+		}
+	}
+	return shadow;
+}
+float filterPCF(vec4 sc)
+{
+	ivec2 texDim = textureSize(shadowMap, 0);
+	float scale = 1.5;
+	float dx = scale * 1.0 / float(texDim.x);
+	float dy = scale * 1.0 / float(texDim.y);
+
+	float shadowFactor = 0.0;
+	int count = 0;
+	int range = 1;
+	
+	for (int x = -range; x <= range; x++)
+	{
+		for (int y = -range; y <= range; y++)
+		{
+			shadowFactor += textureProj(sc, vec2(dx*x, dy*y));
+			count++;
+		}
+	
+	}
+	return shadowFactor / count;
+}
+
+
+void main(void)
+{
+
+    vec3 normal = normalize(Normal);
+
+    vec3 light_Direction = normalize(lightPos - FragPos);
+
+    vec3 half_vector = normalize(viewPos + light_Direction);
+
+    float fndotl = dot(normal, light_Direction);
+    float shadowFactor = CalcShadowFactor(inShadowCoord);
+
+    float diffuse = max(0.0, fndotl) * shadowFactor + ambient;
+    vec3 temp_Color = vec3(diffuse);
+
+    float specular = max( 0.0, dot( normal, half_vector) );
+
+    if(shadowFactor > 0.9){
+        float fspecular = pow(specular, 64.0);
+        temp_Color += fspecular + ambient;
+    }
+
+    outColor = vec4(shadowFactor * texture(texSampler, fragTexCoord).xyz * temp_Color, 1.0);
+    //outColor = vec4(texture(texSampler, fragTexCoord).xyz * temp_Color, 1.0);
+    
+    	
+
 }

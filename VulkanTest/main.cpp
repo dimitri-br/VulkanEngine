@@ -25,18 +25,30 @@
 #include <unordered_map> // used to check we aren't adding unnecessary verticies
 #include <glm/gtx/hash.hpp> // used to hash
 
-const uint32_t WIDTH = 1920;
-const uint32_t HEIGHT = 1080;
+const uint32_t WIDTH = 800;
+const uint32_t HEIGHT = 600;
 
-const bool FULLSCREEN = true;
+
+
+
+const uint32_t SHADOWMAP_DIM = 2048;
+#define DEPTH_FORMAT VK_FORMAT_D16_UNORM
+
+#define DEFAULT_SHADOWMAP_FILTER VK_FILTER_LINEAR
+
+float lastX = WIDTH / 2.0f;
+float lastY = HEIGHT / 2.0f;
+bool firstMouse = true;
+const float YAW = -90.0f;
+const float PITCH = 0.0f;
+const float SPEED = 2.5f;
+
+
+const bool FULLSCREEN = false;
 
 // base names to help customize later
-const std::string MODEL_PATH = "models/model.obj";
 const std::string TEXTURE_PATH = "textures/texture.png";
 
-// (Z, X, Y)
-const glm::vec3 eyePos(3.0f, 0.0f, 2.0f); // eye pos, eg camera
-const glm::vec3 lightPos(-5.0f, 2.0f, 2.5f); // light pos, eg sun
 
 
 
@@ -169,33 +181,65 @@ struct UniformBufferObject {
     alignas(16) glm::mat4 model;
     alignas(16) glm::mat4 view;
     alignas(16) glm::mat4 proj;
+    alignas(16) glm::mat4 lightSpace;
     alignas(16) glm::vec3 lightPos;
     alignas(16) glm::vec3 camPos;
 };
 
+// Material information - holds info for the shader
 struct Material {
     alignas(16) float shininess;
+    alignas(16) glm::vec3 color;
 };
 
-// Pos, then Color
-/*
-const std::vector<Vertex> vertices = {
-    {{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
-    {{0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
-    {{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},
-    {{-0.5f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}},
+// Transform information
+struct Transform {
+    alignas(16) glm::mat4 transform;
+};
 
-    {{-0.5f, -0.5f, -1.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
-    {{0.5f, -0.5f, -1.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
-    {{0.5f, 0.5f, -1.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},
-    {{-0.5f, 0.5f, -1.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}}
+// Holds our light info for the shadowmap
+struct uboOffscreenVS {
+    alignas(16) glm::mat4 MVP;
+    alignas(16) std::array<glm::mat4, 10> objects;
 };
-// Index buffer - reuse verticies
-const std::vector<uint16_t> indices = {
-    0, 1, 2, 2, 3, 0,
-    4, 5, 6, 6, 7, 4
+
+
+// Holds descriptor set, material data and vertex data. Will be extended
+struct Object {
+    // Vertex and index buffers must be stored as buffers on the GPU, as they need to be read by the device.
+    std::vector<Vertex> vertices;
+    std::vector<uint32_t> indices;
+    VkBuffer vertexBuffer;
+    VkDeviceMemory vertexBufferMemory;
+    VkBuffer indexBuffer;
+    VkDeviceMemory indexBufferMemory;
+
+    // Descriptor sets specific to this object (So we can customize transformations and materials etc)
+    std::vector<VkDescriptorSet> descriptorSets;
+
+    // materials specific to this object
+    std::vector<VkBuffer> materialBuffers;
+    std::vector<VkDeviceMemory> materialBuffersMemory;
+
+    std::vector<VkBuffer> transformBuffers;
+    std::vector<VkDeviceMemory> transformBuffersMemory;
+
+    // Must be locally defined so we can pass it to the shader
+    Transform transform;
+
+    Material mat;
+
+    std::string model_path = "./models/model.obj";
+
+    void init(std::string model, Material material, Transform trans) {
+        model_path = model;
+        mat = material;
+        transform = trans;
+    }
+    
 };
-*/
+
+
 
 class HelloTriangleApplication {
 public:
@@ -227,7 +271,12 @@ private:
 
     std::vector<VkFramebuffer> swapChainFramebuffers; // Stores the images from the framebuffer
 
+    VkFramebuffer offscreenFramebuffer;
+    std::vector <VkDescriptorSet> offscreenSet;
+
     std::vector<VkCommandBuffer> commandBuffers; // Stores every command. They're implicitly destroyed, so no need to cleanup
+
+    std::vector<VkCommandBuffer> shadowCommandBuffers;
 
     // Needed to interface with the GLFW window
     VkSurfaceKHR surface;
@@ -237,6 +286,12 @@ private:
 
     // Tells vulkan about what attachments to use (Like color, stencil etc)
     VkRenderPass renderPass;
+    VkRenderPass offscreenRenderPass;
+
+
+
+
+
 
     VkSampleCountFlagBits msaaSamples = VK_SAMPLE_COUNT_1_BIT; // Multisampling. 1 bit is equivillant to nothing
 
@@ -247,25 +302,37 @@ private:
 
     VkDescriptorSetLayout descriptorSetLayout;
 
-    VkDescriptorPool descriptorPool;
-    std::vector<VkDescriptorSet> descriptorSets;
+
+    std::vector<VkDescriptorPool> descriptorPool;
+    
 
     // Pipeline layouts can be used to send uniform data to shaders. This can be anything from a transformation matrix or textures for a fragment shader.
     VkPipelineLayout pipelineLayout;
 
-    // Vertex and index buffers must be stored as buffers on the GPU, as they need to be read by the device.
-    std::vector<Vertex> vertices;
-    std::vector<uint32_t> indices;
-    VkBuffer vertexBuffer;
-    VkDeviceMemory vertexBufferMemory;
-    VkBuffer indexBuffer;
-    VkDeviceMemory indexBufferMemory;
+
+    std::vector<Object> objects;
+
+    std::vector<glm::vec3> cubePositions = {
+        glm::vec3(-5.0f,  -1.0f,  0.0f),
+        glm::vec3(-5.0f,  -2.0f, 0.0f),
+        glm::vec3(-1.5f, 0.2f, -2.5f),
+        glm::vec3(0.0f, 0.0f, 5.3f),
+        glm::vec3(2.4f, -0.4f, -3.5f),
+        glm::vec3(-1.7f,  3.0f, -1.5f),
+        glm::vec3(1.3f, -2.0f, -2.5f),
+        glm::vec3(1.5f,  2.0f, -2.5f),
+        glm::vec3(1.5f,  0.2f, -1.5f),
+        glm::vec3(-1.3f,  1.0f, -1.5f)
+    };
+
+
     // This is stored as an array so if one buffer is in-flight, we don't modify it by mistake.
     std::vector<VkBuffer> uniformBuffers;
     std::vector<VkDeviceMemory> uniformBuffersMemory;
 
-    std::vector<VkBuffer> materialBuffers;
-    std::vector<VkDeviceMemory> materialBuffersMemory;
+    std::vector<VkBuffer> shadowBuffers;
+    std::vector<VkDeviceMemory> shadowBuffersMemory;
+
 
     VkImage textureImage;
     VkDeviceMemory textureImageMemory;
@@ -277,7 +344,15 @@ private:
     VkDeviceMemory depthImageMemory;
     VkImageView depthImageView;
 
+
+
     VkPipeline graphicsPipeline;
+    VkPipeline offscreenPipeline;
+
+    VkImage shadowImage;
+    VkDeviceMemory shadowImageMemory;
+    VkImageView shadowImageView;
+    VkSampler shadowSampler;
 
     uint32_t mipLevels;
 
@@ -293,6 +368,41 @@ private:
     std::vector<VkFence> imagesInFlight; // This makes sure if we push a frame in flight, we don't render it twice when its already in flight.
     size_t currentFrame = 0; // current frame we are on
     bool framebufferResized = false; // was the frame resized
+
+    // Camera settings
+
+    // Camera rotation
+    glm::vec3 cameraPos = glm::vec3(0.0f, 1.0f, 5.0f);
+    glm::vec3 cameraFront = glm::vec3(0.0f, 0.0f, -1.0f);
+    glm::vec3 cameraUp = glm::vec3(0.0f, 1.0f, 0.0f);
+
+    float yaw = YAW;
+    float pitch = PITCH;
+
+    float deltaTime = 0.0f;
+
+    std::chrono::steady_clock::time_point lastFrameTime = std::chrono::high_resolution_clock::now();
+
+
+    int cube_index = 0;
+    // Keep depth range as small as possible
+// for better shadow map precision
+    float zNear = 1.0f;
+    float zFar = 96.0f;
+
+    // Depth bias (and slope) are used to avoid shadowing artifacts
+    // Constant depth bias factor (always applied)
+    float depthBiasConstant = 1.25f;
+    // Slope depth bias factor, applied depending on polygon's slope
+    float depthBiasSlope = 1.75f;
+    float lightFOV = 45.0f;
+    uboOffscreenVS depthMVP;
+    // (Z, X, Y)
+    //glm::vec3 lightPos{}; // light pos, eg sun
+
+    // This is stored as an array so if one buffer is in-flight, we don't modify it by mistake.
+    std::vector<VkBuffer> offscreenBuffers;
+    std::vector<VkDeviceMemory> offscreenBuffersMemory;
 
     struct QueueFamilyIndices {
         std::optional<uint32_t> graphicsFamily;
@@ -317,10 +427,21 @@ private:
 
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API); // Default is OpenGL - Lets make it use no API (so we can setup vulkan)
         glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE); //  resizable
+        if (FULLSCREEN) {
+            window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan", glfwGetPrimaryMonitor(), nullptr); // Create the window object
 
-        window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan", glfwGetPrimaryMonitor(), nullptr); // Create the window object
+        }
+        else {
+            window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan", nullptr, nullptr); // Create the window object
+
+        }
         glfwSetWindowUserPointer(window, this); // set a pointer to this class so we can use it in static functions where we pass a window
         glfwSetFramebufferSizeCallback(window, framebufferResizeCallback);
+        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+        glfwSetCursorPosCallback(window, mouse_callback);
+        glfwSetKeyCallback(window, key_callback);
+
+        glfwSwapInterval(1);
     }
 
     // This function will be called whenever the screen is resized, along with the new width and height
@@ -328,6 +449,76 @@ private:
         auto app = reinterpret_cast<HelloTriangleApplication*>(glfwGetWindowUserPointer(window));
         app->framebufferResized = true;
     }
+    // get mouse input
+    static void mouse_callback(GLFWwindow* window, double xpos, double ypos)
+    {
+        auto app = reinterpret_cast<HelloTriangleApplication*>(glfwGetWindowUserPointer(window));
+        float yaw = app->yaw;
+        float pitch = app->pitch;
+
+        if (firstMouse)
+        {
+            lastX = xpos;
+            lastY = ypos;
+            firstMouse = false;
+        }
+
+        float xoffset = xpos - lastX;
+        float yoffset = lastY - ypos;
+        lastX = xpos;
+        lastY = ypos;
+
+        float sensitivity = 0.1f;
+        xoffset *= sensitivity;
+        yoffset *= sensitivity;
+
+        yaw += xoffset;
+        pitch += yoffset;
+
+        if (pitch > 89.0f)
+            pitch = 89.0f;
+        if (pitch < -89.0f)
+            pitch = -89.0f;
+
+        glm::vec3 direction;
+        direction.x = cos(glm::radians(yaw)) * cos(glm::radians(pitch));
+        direction.y = sin(glm::radians(pitch));
+        direction.z = sin(glm::radians(yaw)) * cos(glm::radians(pitch));
+        app->cameraFront = glm::normalize(direction);
+        app->yaw = yaw;
+        app->pitch = pitch;
+    }
+    // get keyboard input
+    static void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods)
+    {
+        auto app = reinterpret_cast<HelloTriangleApplication*>(glfwGetWindowUserPointer(window));
+
+        
+
+        glm::vec3 front = app->cameraFront;
+        glm::vec3 pos = app->cameraPos;
+        glm::vec3 right = glm::normalize(glm::cross(front, glm::vec3(0.0f, 1.0f, 0.0f)));
+        float deltaTime = app->deltaTime;
+        float velocity = 10.0f * deltaTime;
+
+        if (key == GLFW_KEY_W && (action == GLFW_REPEAT || action == GLFW_PRESS)) {
+            pos += front * velocity;
+        }
+        if (key == GLFW_KEY_S && (action == GLFW_REPEAT || action == GLFW_PRESS)) {
+            pos -= front * velocity;
+        }
+        if (key == GLFW_KEY_A && (action == GLFW_REPEAT || action == GLFW_PRESS)) {
+            pos -= right * velocity;
+        }
+        if (key == GLFW_KEY_D && (action == GLFW_REPEAT || action == GLFW_PRESS)) {
+            pos += right * velocity;
+        }
+
+        app->cameraPos = pos;
+    }
+
+
+
     // Create a surface - this is how vulkan interfaces with the window for renderering. Can affect Device selection, so we need to do it first! Is optional.
     void createSurface() {
         if (glfwCreateWindowSurface(instance, window, nullptr, &surface) != VK_SUCCESS) {
@@ -415,13 +606,18 @@ private:
 
         createSwapChain(); // *sigh*
 
+
         createImageViews(); // Get the idea?
 
         createRenderPass();
 
+
         createDescriptorSetLayout();
 
-        createGraphicsPipeline(); // Come on!
+        
+
+
+
 
         createCommandPool();
 
@@ -430,20 +626,32 @@ private:
         createDepthResources();
 
         createFramebuffers();
+        prepareOffscreenFramebuffer();
+        
 
+        createGraphicsPipeline(); // Come on!
+        createOffscreenGraphicsPipeline();
         createTextureImage(TEXTURE_PATH);
         createTextureImageView();
         createTextureSampler();
 
-        loadModel();
 
-        createVertexBuffer();
-        createIndexBuffer();
+        createOffscreenBuffer();
         createUniformBuffers();
-        createMaterialBuffers();
+        
 
-        createDescriptorPool();
-        createDescriptorSets();
+        // Needed before Object creation
+        
+        for (int i = 0; i < 1; i++) {
+            createObject(0, glm::vec3(1, 1, 1));
+        }
+        for (int i = 0; i < 1; i++) {
+            createObject(1, glm::vec3(3.0f, 0.25f, 3.0f));
+        }
+        
+        
+
+        
 
         createCommandBuffers();
 
@@ -452,12 +660,24 @@ private:
 
     //Main loop
     void mainLoop() {
+
         while (!glfwWindowShouldClose(window)) { // While the window shouldn't close
             glfwPollEvents(); // Loop!
+             // Get the time
+
+            
             drawFrame();
+            calculateDeltaTime();
         }
 
         vkDeviceWaitIdle(device); // make sure we're finished rendering before destroying the window
+    }
+
+    void calculateDeltaTime() {
+        auto currentTime = std::chrono::high_resolution_clock::now(); // Get the time
+        float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - lastFrameTime).count(); // Check how much time has passed
+        lastFrameTime = currentTime;
+        deltaTime = time;
     }
 
     // drawFrame will do the following operations - Aqiuire an image from the swapchain, execute a command buffer then return the image to the swapchain for presentation
@@ -487,6 +707,8 @@ private:
         imagesInFlight[imageIndex] = inFlightFences[currentFrame];
 
         updateUniformBuffer(imageIndex);
+        updateMaterialBuffer(imageIndex);
+        updateTransforms(imageIndex);
 
         // To submit to the command buffer, we need to create submit info
         VkSubmitInfo submitInfo{};
@@ -541,30 +763,81 @@ private:
         currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT; // the modulo makes sure the current frame never goes over 2, so we either render frame 0 or frame 1
     }
 
+    // Function for conversion 
+    float DEG_TO_RAD(float degree)
+    {
+        double pi = 3.14159265359;
+        return (degree * (pi / 180));
+    }
+
+    glm::mat4 compute_view_matrix_for_rotation(glm::vec3 origin, glm::vec3 rot){
+        glm::mat4 mat(1.0);
+        float rx = DEG_TO_RAD(rot.x);
+        float ry = DEG_TO_RAD(rot.y);
+        float rz = DEG_TO_RAD(rot.z);
+        mat = glm::rotate(mat, -rx, glm::vec3(1, 0, 0));
+        mat = glm::rotate(mat, -ry, glm::vec3(0, 1, 0));
+        mat = glm::rotate(mat, -rz, glm::vec3(0, 0, 1));
+        mat = glm::translate(mat, -origin);
+        return mat;
+    }
+
     // Updates the uniform buffer depending on the current swapchain image
     void updateUniformBuffer(uint32_t currentImage) {
-        std::cout << "Update ubo!!!!\n\n\n\n" << std::endl;
         static auto startTime = std::chrono::high_resolution_clock::now(); // Get the time
 
         auto currentTime = std::chrono::high_resolution_clock::now(); // Get the time
-        float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count(); // Check how much time has passed
+        float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count() / 7; // Check how much time has passed
+
+        glm::vec3 lightPos = glm::vec3(0.0f, 5.0f, -5.0f);
+       
+
+        float near_plane = 1.0f, far_plane = 35.0f;
+        glm::mat4 depthProjectionMatrix = glm::ortho(-10.0f, 10.0f, -10.0f, 10.0f, zNear, zFar);
+        //glm::mat4 depthProjectionMatrix = glm::perspective(glm::radians(lightFOV), 1.0f, zNear, zFar);
+        //glm::mat4 depthViewMatrix = compute_view_matrix_for_rotation(lightPos, glm::vec3(-75.0, 0.0f, -90.0));
+        //glm::mat4 depthViewMatrix = glm::lookAt(lightPos, glm::vec3(0.0f), glm::vec3(0, 1, 0));
+        glm::mat4 depthViewMatrix = glm::lookAt(lightPos, glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+        glm::mat4 depthModelMatrix = glm::mat4(1.0f);
+
+        //depthProjectionMatrix[1][1] *= -1;
+
+        glm::mat4 depthmvp = depthProjectionMatrix * depthViewMatrix * depthModelMatrix;
+
+        //
+        depthmvp = depthmvp;
+
+
+        depthMVP.MVP = depthmvp;
+
+        void* sData;
+        vkMapMemory(device, offscreenBuffersMemory[currentImage], 0, sizeof(depthMVP), 0, &sData);
+        memcpy(sData, &depthMVP, sizeof(depthMVP));
+        vkUnmapMemory(device, offscreenBuffersMemory[currentImage]);
+
+
+
 
         // Create a ubo, then rotate the model Z by 5 radians every second
         UniformBufferObject ubo{};
         
 
         ubo.model = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, 0.0f)); // translate the model. vec3 specifies translation. Seems to be (z, x, y)
-        ubo.model *= glm::rotate(glm::mat4(1.0f), time * glm::radians(5.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+        //ubo.model *= glm::rotate(glm::mat4(1.0f), time * glm::radians(5.0f), glm::vec3(0.0f, 0.0f, 1.0f));
         
         ubo.lightPos = lightPos;
-        ubo.camPos = eyePos;
+        ubo.camPos = cameraPos;
+
+        ubo.lightSpace = depthmvp;
+
 
 
         // How we look at the world (Useful for 3d)
         // Eye pos, center pos and up axis
-        ubo.view = glm::lookAt(eyePos, glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+        ubo.view =  glm::lookAt(cameraPos, cameraPos + cameraFront, cameraUp);
+        //ubo.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
         // Perspective - 45 degre vertical FOV, aspect ratio and near and far planes.
-        ubo.proj = glm::perspective(glm::radians(45.0f), swapChainExtent.width / (float)swapChainExtent.height, 0.1f, 10.0f);
+        ubo.proj = glm::perspective(glm::radians(45.0f), swapChainExtent.width / (float)swapChainExtent.height, 0.1f, 100.0f);
 
         // Don't forget to flip Y axis as it was designed for opengl!!!!!
         ubo.proj[1][1] *= -1;
@@ -576,27 +849,48 @@ private:
         vkUnmapMemory(device, uniformBuffersMemory[currentImage]);
     }
 
+    // Update the material settings per model
     void updateMaterialBuffer(uint32_t currentImage) {
-        std::cout << "Update mat!!!!\n\n\n\n" << std::endl;
-      
-        Material mat{};
+        for (Object obj : objects) {
 
-        mat.shininess = 1.0f;
-
-        // write material to memory
-        void* dataM;
-        vkMapMemory(device, materialBuffersMemory[currentImage], 0, sizeof(mat), 0, &dataM);
-        memcpy(dataM, &mat, sizeof(mat));
-        vkUnmapMemory(device, materialBuffersMemory[currentImage]);
+           // write material to memory
+            void* data;
+            vkMapMemory(device, obj.materialBuffersMemory[currentImage], 0, sizeof(obj.mat), 0, &data);
+            memcpy(data, &obj.mat, sizeof(obj.mat));
+            vkUnmapMemory(device, obj.materialBuffersMemory[currentImage]);
+        }
     }
 
-    void loadModel() {
+    // Update the transform settings per model
+    void updateTransforms(uint32_t currentImage) {
+        static auto startTime = std::chrono::high_resolution_clock::now(); // Get the time
+
+        auto currentTime = std::chrono::high_resolution_clock::now(); // Get the time
+        float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count(); // Check how much time has passed
+        int i = 0;
+        for (Object obj : objects) {
+            glm::mat4 trans = glm::mat4(1.0f);
+            
+
+            
+
+            // write material to memory
+            void* data;
+            vkMapMemory(device, obj.transformBuffersMemory[currentImage], 0, sizeof(obj.transform), 0, &data);
+            memcpy(data, &obj.transform, sizeof(obj.transform));
+            vkUnmapMemory(device, obj.transformBuffersMemory[currentImage]);
+
+            i++;
+        }
+    }
+
+    Object loadModel(Object obj) {
         tinyobj::attrib_t attrib; // holds the position, normals and texture coordinates
         std::vector<tinyobj::shape_t> shapes; // contains all seperate objects + faces
         std::vector<tinyobj::material_t> materials; //ignore
         std::string warn, err; // warnings and errors while loading the file
 
-        if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, MODEL_PATH.c_str())) {
+        if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, obj.model_path.c_str())) {
             throw std::runtime_error(warn + err);
         }
 
@@ -630,15 +924,89 @@ private:
                 
                 // add to the buffers - but only add the vertex if it is not present already within the array
                 if (uniqueVertices.count(vertex) == 0) {
-                    uniqueVertices[vertex] = static_cast<uint32_t>(vertices.size());
-                    vertices.push_back(vertex);
+                    uniqueVertices[vertex] = static_cast<uint32_t>(obj.vertices.size());
+                    obj.vertices.push_back(vertex);
                 }
                 // add the vertex to the index buffer
-                indices.push_back(uniqueVertices[vertex]);
+                obj.indices.push_back(uniqueVertices[vertex]);
                 
             }
         }
         std::cout << "Finished loading the model" << std::endl;
+
+        return obj;
+    }
+
+    void createObject(int type, glm::vec3 scale) {
+        Object obj{};
+
+        Material mat{};
+
+
+        float r = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
+        float g = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
+        float b = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
+        mat.color = { 1.0f, 1.0f, 1.0f };
+        
+        
+        mat.shininess = 1.0f;
+
+        Transform trans{};
+        trans.transform = glm::translate(glm::mat4(1.0f) , cubePositions[cube_index]); // translate the model. vec3 specifies translation. Seems to be (z, x, y)
+        trans.transform = glm::scale(trans.transform, scale);
+       
+        
+        if (type == 0) {
+            obj.init("./models/model.obj", mat, trans); // initialize our object
+        }
+        else if (type == 1) {
+            obj.init("./models/cube.obj", mat, trans); // initialize our object
+        }
+        else {
+            obj.init("./models/model.obj", mat, trans); // initialize our object
+        }
+        
+
+        obj = loadModel(obj);
+        std::cout << "Model loaded to obj! \n\n\n";
+
+        obj = createVertexBuffer(obj);
+        std::cout << "Vertex buffer created! \n\n\n";
+
+        obj = createIndexBuffer(obj);
+        std::cout << "Index buffer created! \n\n\n";
+
+        obj = createMaterialBuffers(obj);
+        std::cout << "Material buffer created! \n\n\n";
+
+        obj = createTransformBuffers(obj);
+        std::cout << "Transform buffer created! \n\n\n";
+        if (descriptorPool.size() == 0) {
+            descriptorPool.resize(20);
+            std::cout << "resized pool! \n\n\n";
+            createDescriptorPool();
+        }
+        
+
+        obj = createDescriptorSets(obj, cube_index);
+        std::cout << "sets created! \n\n\n";
+        objects.push_back(obj);
+
+        cube_index++;
+
+        std::cout << "Created object! \n\n\n";
+    }
+
+    void recreateObjects() {
+        int i = 0;
+        for (Object obj : objects) {
+            
+            obj = createMaterialBuffers(obj);
+            obj = createTransformBuffers(obj);
+            obj = createDescriptorSets(obj, i);
+            objects[i] = obj;
+            i++;
+        }
     }
 
     // Needed to stay memory-safe. Cleans up on exit
@@ -659,8 +1027,11 @@ private:
         vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
 
         // Destroy the buffer and buffer memory
-        vkDestroyBuffer(device, vertexBuffer, nullptr);
-        vkFreeMemory(device, vertexBufferMemory, nullptr);
+        for (Object obj : objects) {
+            vkDestroyBuffer(device, obj.vertexBuffer, nullptr);
+            vkFreeMemory(device, obj.vertexBufferMemory, nullptr);
+        }
+        
 
 
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
@@ -694,9 +1065,9 @@ private:
         appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
         appInfo.pApplicationName = "Hello Triangle";
         appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
-        appInfo.pEngineName = "No Engine";
+        appInfo.pEngineName = "VulkanEngine";
         appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
-        appInfo.apiVersion = VK_API_VERSION_1_0;
+        appInfo.apiVersion = VK_API_VERSION_1_2;
 
         VkInstanceCreateInfo createInfo{};
         createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
@@ -902,6 +1273,8 @@ private:
         depthAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED; // we don't care about the old contents
         depthAttachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
+
+
         // As things run through MSAA cannot be rendered directly, we must run it through an attachement resolve, which will convert it into a drawable format
         VkAttachmentDescription colorAttachmentResolve{};
         colorAttachmentResolve.format = swapChainImageFormat;
@@ -924,19 +1297,27 @@ private:
         depthAttachmentRef.attachment = 1;
         depthAttachmentRef.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
+        
+
         // For the resolve
         VkAttachmentReference colorAttachmentResolveRef{};
         colorAttachmentResolveRef.attachment = 2;
         colorAttachmentResolveRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
+
         // Make a subpass
-        VkSubpassDescription subpass{};
-        subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS; // Must be explicit that is it a graphics pass
+        std::array<VkSubpassDescription, 1> subpass = {};
+        subpass[0].pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS; // Must be explicit that is it a graphics pass
         // Pass our attachment to the subpass
-        subpass.colorAttachmentCount = 1;
-        subpass.pColorAttachments = &colorAttachmentRef; // attach the color reference
-        subpass.pDepthStencilAttachment = &depthAttachmentRef; // attach the depth reference
-        subpass.pResolveAttachments = &colorAttachmentResolveRef; // attach the resolve reference
+        subpass[0].colorAttachmentCount = 1;
+        subpass[0].pColorAttachments = &colorAttachmentRef; // attach the color reference
+        subpass[0].pDepthStencilAttachment = &depthAttachmentRef; // attach the depth reference
+        subpass[0].pResolveAttachments = &colorAttachmentResolveRef; // attach the resolve reference
+
+
+
+
+
 
         // This can be used to prevent the subpass writing to the image before its ready to use.
         VkSubpassDependency dependency{};
@@ -954,8 +1335,8 @@ private:
         renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
         renderPassInfo.attachmentCount = static_cast<uint32_t>(attachments.size());
         renderPassInfo.pAttachments = attachments.data();
-        renderPassInfo.subpassCount = 1;
-        renderPassInfo.pSubpasses = &subpass;
+        renderPassInfo.subpassCount = subpass.size();
+        renderPassInfo.pSubpasses = subpass.data();
         // This prevents us writing to the image and adding color too early
         renderPassInfo.dependencyCount = 1;
         renderPassInfo.pDependencies = &dependency;
@@ -965,83 +1346,359 @@ private:
         }
     }
 
+    // Set up a separate render pass for the offscreen frame buffer
+    // This is necessary as the offscreen frame buffer attachments use formats different to those from the example render pass
+    void prepareOffscreenRenderpass()
+    {
+        VkAttachmentDescription attachmentDescription{};
+        attachmentDescription.format = DEPTH_FORMAT;
+        attachmentDescription.samples = VK_SAMPLE_COUNT_1_BIT;
+        attachmentDescription.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;							// Clear depth at beginning of the render pass
+        attachmentDescription.storeOp = VK_ATTACHMENT_STORE_OP_STORE;						// We will read from depth, so it's important to store the depth attachment results
+        attachmentDescription.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        attachmentDescription.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        attachmentDescription.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;					// We don't care about initial layout of the attachment
+        attachmentDescription.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;// Attachment will be transitioned to shader read at render pass end
+
+        VkAttachmentReference depthReference = {};
+        depthReference.attachment = 0;
+        depthReference.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;			// Attachment will be used as depth/stencil during render pass
+
+        VkSubpassDescription subpass = {};
+        subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+        subpass.colorAttachmentCount = 0;													// No color attachments
+        subpass.pDepthStencilAttachment = &depthReference;									// Reference to our depth attachment
+
+        // Use subpass dependencies for layout transitions
+        std::array<VkSubpassDependency, 2> dependencies;
+
+        dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL;
+        dependencies[0].dstSubpass = 0;
+        dependencies[0].srcStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        dependencies[0].dstStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+        dependencies[0].srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        dependencies[0].dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        dependencies[0].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+
+        dependencies[1].srcSubpass = 0;
+        dependencies[1].dstSubpass = VK_SUBPASS_EXTERNAL;
+        dependencies[1].srcStageMask = VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+        dependencies[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        dependencies[1].srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        dependencies[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        dependencies[1].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+
+
+
+
+        VkRenderPassCreateInfo renderPassCreateInfo{};
+        renderPassCreateInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+        renderPassCreateInfo.attachmentCount = 1;
+        renderPassCreateInfo.pAttachments = &attachmentDescription;
+        renderPassCreateInfo.subpassCount = 1;
+        renderPassCreateInfo.pSubpasses = &subpass;
+        renderPassCreateInfo.dependencyCount = static_cast<uint32_t>(dependencies.size());
+        renderPassCreateInfo.pDependencies = dependencies.data();
+
+        
+        if (vkCreateRenderPass(device, &renderPassCreateInfo, nullptr, &offscreenRenderPass) != VK_SUCCESS) {
+                throw std::runtime_error("failed to create render pass!");
+        }
+    }
+
+    // Setup an offscreen framebuffer
+    void prepareOffscreenFramebuffer()
+    {
+
+        // For shadow mapping we only need a depth attachment
+        VkImageCreateInfo image{};
+        image.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        image.imageType = VK_IMAGE_TYPE_2D;
+        image.extent.width = SHADOWMAP_DIM;
+        image.extent.height = SHADOWMAP_DIM;
+        image.extent.depth = 1;
+        image.mipLevels = 1;
+        image.arrayLayers = 1;
+        image.samples = VK_SAMPLE_COUNT_1_BIT;
+        image.tiling = VK_IMAGE_TILING_OPTIMAL;
+        image.format = DEPTH_FORMAT;		// Depth stencil attachment
+        image.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;		// We will sample directly from the depth attachment for the shadow mapping
+
+        if (vkCreateImage(device, &image, nullptr, &shadowImage) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create offscreen image!");
+        }
+
+
+        // Get the memory requirements for the image
+        VkMemoryRequirements memRequirements;
+        vkGetImageMemoryRequirements(device, shadowImage, &memRequirements);
+
+        // allocation information for the image. Similar to buffer creation. Select local device for best perfomance
+        VkMemoryAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocInfo.allocationSize = memRequirements.size;
+        allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+        if (vkAllocateMemory(device, &allocInfo, nullptr, &shadowImageMemory) != VK_SUCCESS) {
+            throw std::runtime_error("failed to allocate offscreen image memory!");
+        }
+
+        if (vkBindImageMemory(device, shadowImage, shadowImageMemory, 0) != VK_SUCCESS) {
+            throw std::runtime_error("failed to bind offscreen image memory!");
+        }
+
+
+        VkImageViewCreateInfo depthStencilView{};
+        depthStencilView.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        depthStencilView.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        depthStencilView.format = DEPTH_FORMAT;
+        depthStencilView.subresourceRange = {};
+        depthStencilView.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+        depthStencilView.subresourceRange.baseMipLevel = 0;
+        depthStencilView.subresourceRange.levelCount = 1;
+        depthStencilView.subresourceRange.baseArrayLayer = 0;
+        depthStencilView.subresourceRange.layerCount = 1;
+        depthStencilView.image = shadowImage;
+        if (vkCreateImageView(device, &depthStencilView, nullptr, &shadowImageView) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create depth stencil image view!");
+        }
+        
+
+        // Create sampler to sample from to depth attachment
+        // Used to sample in the fragment shader for shadowed rendering
+
+
+
+        // Create a sampler
+        VkSamplerCreateInfo sampler{};
+        sampler.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        // U, V, W are conventional for textures. This defines what to do when going beyond the texture coordinates
+
+        sampler.magFilter = DEFAULT_SHADOWMAP_FILTER;
+        sampler.minFilter = DEFAULT_SHADOWMAP_FILTER;
+        sampler.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+        sampler.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        sampler.addressModeV = sampler.addressModeU;
+        sampler.addressModeW = sampler.addressModeU;
+        sampler.mipLodBias = 0.0f;
+        sampler.maxAnisotropy = 1.0f;
+        sampler.minLod = 0.0f;
+        sampler.maxLod = 1.0f;
+        sampler.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+        if (vkCreateSampler(device, &sampler, nullptr, &shadowSampler) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create shadow sampler!");
+        }
+       
+        prepareOffscreenRenderpass();
+
+        // Create frame buffer
+        VkFramebufferCreateInfo fbufCreateInfo{};
+        fbufCreateInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        fbufCreateInfo.renderPass = offscreenRenderPass;
+        fbufCreateInfo.attachmentCount = 1;
+        fbufCreateInfo.pAttachments = &shadowImageView;
+        fbufCreateInfo.width = SHADOWMAP_DIM;
+        fbufCreateInfo.height = SHADOWMAP_DIM;
+        fbufCreateInfo.layers = 1;
+
+        if (vkCreateFramebuffer(device, &fbufCreateInfo, nullptr, &offscreenFramebuffer) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create offscreen framebuffer!");
+        }
+    }
+
+
     // Descriptor sets cannot be created directly, they must be allocated in descriptor pools.
     void createDescriptorPool() {
-        // we have to allocate one pool for every frame, to prevent conflicts while in-flight. Also include all the descriptors we will use
-        std::array<VkDescriptorPoolSize, 3> poolSizes{};
-        poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        poolSizes[0].descriptorCount = static_cast<uint32_t>(swapChainImages.size());
+        std::cout << descriptorPool.size();
+        for(int i = 0; i < descriptorPool.size(); i++) {
+            // we have to allocate one pool for every frame, to prevent conflicts while in-flight. Also include all the descriptors we will use
+            std::array<VkDescriptorPoolSize, 6> poolSizes{};
+            poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            poolSizes[0].descriptorCount = static_cast<uint32_t>(swapChainImages.size());
 
+            poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            poolSizes[1].descriptorCount = static_cast<uint32_t>(swapChainImages.size());
 
-        poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        poolSizes[1].descriptorCount = static_cast<uint32_t>(swapChainImages.size());
+            poolSizes[2].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            poolSizes[2].descriptorCount = static_cast<uint32_t>(swapChainImages.size());
 
+            poolSizes[3].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            poolSizes[3].descriptorCount = static_cast<uint32_t>(swapChainImages.size());
 
+            poolSizes[4].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            poolSizes[4].descriptorCount = static_cast<uint32_t>(swapChainImages.size());
 
-        // we must specify the max amount of descriptor sets that can be allocated
-        VkDescriptorPoolCreateInfo poolInfo{};
-        poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-        poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size()); // size of the pool (How many descriptors to use)
-        poolInfo.pPoolSizes = poolSizes.data(); // the pool size within the array
-        poolInfo.maxSets = static_cast<uint32_t>(swapChainImages.size());
+            poolSizes[5].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            poolSizes[5].descriptorCount = static_cast<uint32_t>(swapChainImages.size());
 
-        poolInfo.flags = 0; // optional - this can be used to define whether individual descriptor sets can be freed or not.
+            // we must specify the max amount of descriptor sets that can be allocated
+            VkDescriptorPoolCreateInfo poolInfo{};
+            poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+            poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size()); // size of the pool (How many descriptors to use)
+            poolInfo.pPoolSizes = poolSizes.data(); // the pool size within the array
+            poolInfo.maxSets = static_cast<uint32_t>(swapChainImages.size());
 
-        if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create descriptor pool!");
+            poolInfo.flags = 0; // optional - this can be used to define whether individual descriptor sets can be freed or not.
+
+            if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool[i]) != VK_SUCCESS) {
+                throw std::runtime_error("failed to create descriptor pool!");
+            }
+        }
+    }
+
+    void createOffscreenBuffer() {
+        // Matrix from light's point of view
+
+        VkDeviceSize bufferSize = sizeof(uboOffscreenVS);
+
+        offscreenBuffers.resize(swapChainImages.size());
+        offscreenBuffersMemory.resize(swapChainImages.size());
+
+        for (size_t i = 0; i < swapChainImages.size(); i++) {
+            // Create a buffer. We don't use staging as we want to be able to modify this buffer. We will also send data to the memory when we modify it in the drawFrame, so no need to memcpy
+            createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, offscreenBuffers[i], offscreenBuffersMemory[i]);
         }
     }
 
     // Create descriptor sets, which can be used by shaders to access buffer data (Like the UBO) or image data.
-    void createDescriptorSets() {
-        std::vector<VkDescriptorSetLayout> layouts(swapChainImages.size(), descriptorSetLayout);
+    Object createDescriptorSets(Object obj, int idx) {
 
-        VkDescriptorSetAllocateInfo allocInfo{};
-        allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-        allocInfo.descriptorPool = descriptorPool;
-        allocInfo.descriptorSetCount = static_cast<uint32_t>(swapChainImages.size());
-        allocInfo.pSetLayouts = layouts.data();
+            std::vector<VkDescriptorSetLayout> layouts(swapChainImages.size(), descriptorSetLayout);
 
-        descriptorSets.resize(swapChainImages.size());
-        if (vkAllocateDescriptorSets(device, &allocInfo, descriptorSets.data()) != VK_SUCCESS) {
-            throw std::runtime_error("failed to allocate descriptor sets!");
-        }
+            VkDescriptorSetAllocateInfo allocInfo{};
+            allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+            allocInfo.descriptorPool = descriptorPool[idx];
+            allocInfo.descriptorSetCount = static_cast<uint32_t>(swapChainImages.size());
+            allocInfo.pSetLayouts = layouts.data();
 
-        for (size_t i = 0; i < swapChainImages.size(); i++) {
-            VkDescriptorBufferInfo uboBufferInfo{};
-            uboBufferInfo.buffer = uniformBuffers[i];
-            uboBufferInfo.offset = 0;
-            uboBufferInfo.range = sizeof(UniformBufferObject);
+            obj.descriptorSets.resize(swapChainImages.size());
 
-            VkDescriptorImageInfo imageInfo{};
-            imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-            imageInfo.imageView = textureImageView;
-            imageInfo.sampler = textureSampler;
 
-            // create an array to store our descriptor sets
-            std::array<VkWriteDescriptorSet, 2> descriptorWrites{};
+            if (vkAllocateDescriptorSets(device, &allocInfo, obj.descriptorSets.data()) != VK_SUCCESS) {
+                throw std::runtime_error("failed to allocate descriptor sets!");
+            }
 
-            descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            descriptorWrites[0].dstSet = descriptorSets[i]; // the set to write to ( we jave one for each frame in the swapchain)
-            descriptorWrites[0].dstBinding = 0;// the binding in the shader
-            descriptorWrites[0].dstArrayElement = 0;
-            descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-            descriptorWrites[0].descriptorCount = 1;
-            descriptorWrites[0].pBufferInfo = &uboBufferInfo; // the buffer to put in the set
-
-            descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            descriptorWrites[1].dstSet = descriptorSets[i];
-            descriptorWrites[1].dstBinding = 1; // the binding in the shader
-            descriptorWrites[1].dstArrayElement = 0;
-            descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            descriptorWrites[1].descriptorCount = 1;
-            descriptorWrites[1].pImageInfo = &imageInfo; // the image (the image sampler) to put in the set
-
-           
             
-            // Update descriptor sets on the device
-            vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
-        }
+
+            allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+            allocInfo.descriptorPool = descriptorPool[idx+10];
+            allocInfo.descriptorSetCount = static_cast<uint32_t>(swapChainImages.size());
+            allocInfo.pSetLayouts = layouts.data();
+
+            offscreenSet.resize(swapChainImages.size());
+
+            if (vkAllocateDescriptorSets(device, &allocInfo, offscreenSet.data()) != VK_SUCCESS) {
+                throw std::runtime_error("failed to allocate offscreen descriptor sets!");
+            }
+
+
+            for (size_t i = 0; i < swapChainImages.size(); i++) {
+                VkDescriptorBufferInfo uboBufferInfo{};
+                uboBufferInfo.buffer = uniformBuffers[i];
+                uboBufferInfo.offset = 0;
+                uboBufferInfo.range = sizeof(UniformBufferObject);
+
+                VkDescriptorImageInfo imageInfo{};
+                imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                imageInfo.imageView = textureImageView;
+                imageInfo.sampler = textureSampler;
+
+                VkDescriptorBufferInfo matBufferInfo{};
+                matBufferInfo.buffer = obj.materialBuffers[i];
+                matBufferInfo.offset = 0;
+                matBufferInfo.range = sizeof(Material);
+
+                VkDescriptorBufferInfo transBufferInfo{};
+                transBufferInfo.buffer = obj.transformBuffers[i];
+                transBufferInfo.offset = 0;
+                transBufferInfo.range = sizeof(Transform);
+
+                VkDescriptorImageInfo offscreenInfo{};
+                offscreenInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+                offscreenInfo.imageView = shadowImageView;
+                offscreenInfo.sampler = shadowSampler;
+                //offscreenInfo.sampler = shadowSampler;
+
+                VkDescriptorBufferInfo shadowBufferInfo{};
+                shadowBufferInfo.buffer = offscreenBuffers[i];
+                shadowBufferInfo.offset = 0;
+                shadowBufferInfo.range = sizeof(uboOffscreenVS);
+
+                VkDescriptorBufferInfo shadowTransBufferInfo{};
+                shadowTransBufferInfo.buffer = obj.transformBuffers[i];
+                shadowTransBufferInfo.offset = 0;
+                shadowTransBufferInfo.range = sizeof(Transform);
+
+                // create an array to store our descriptor sets
+                std::array<VkWriteDescriptorSet, 7> descriptorWrites{};
+
+                descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                descriptorWrites[0].dstSet = obj.descriptorSets[i]; // the set to write to ( we jave one for each frame in the swapchain)
+                descriptorWrites[0].dstBinding = 0;// the binding in the shader
+                descriptorWrites[0].dstArrayElement = 0;
+                descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+                descriptorWrites[0].descriptorCount = 1;
+                descriptorWrites[0].pBufferInfo = &uboBufferInfo; // the buffer to put in the set
+
+                descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                descriptorWrites[1].dstSet = obj.descriptorSets[i];
+                descriptorWrites[1].dstBinding = 1; // the binding in the shader
+                descriptorWrites[1].dstArrayElement = 0;
+                descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                descriptorWrites[1].descriptorCount = 1;
+                descriptorWrites[1].pImageInfo = &imageInfo; // the image (the image sampler) to put in the set
+
+                descriptorWrites[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                descriptorWrites[2].dstSet = obj.descriptorSets[i]; // the set to write to ( we jave one for each frame in the swapchain)
+                descriptorWrites[2].dstBinding = 2;// the binding in the shader
+                descriptorWrites[2].dstArrayElement = 0;
+                descriptorWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+                descriptorWrites[2].descriptorCount = 1;
+                descriptorWrites[2].pBufferInfo = &matBufferInfo; // the buffer to put in the set
+
+                descriptorWrites[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                descriptorWrites[3].dstSet = obj.descriptorSets[i]; // the set to write to ( we jave one for each frame in the swapchain)
+                descriptorWrites[3].dstBinding = 3;// the binding in the shader
+                descriptorWrites[3].dstArrayElement = 0;
+                descriptorWrites[3].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+                descriptorWrites[3].descriptorCount = 1;
+                descriptorWrites[3].pBufferInfo = &transBufferInfo; // the buffer to put in the set
+
+                descriptorWrites[4].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                descriptorWrites[4].dstSet = obj.descriptorSets[i];
+                descriptorWrites[4].dstBinding = 4; // the binding in the shader
+                descriptorWrites[4].dstArrayElement = 0;
+                descriptorWrites[4].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                descriptorWrites[4].descriptorCount = 1;
+                descriptorWrites[4].pImageInfo = &offscreenInfo; // the image (the image sampler) to put in the set
+
+                descriptorWrites[5].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                descriptorWrites[5].dstSet = obj.descriptorSets[i];
+                descriptorWrites[5].dstBinding = 5; // the binding in the shader
+                descriptorWrites[5].dstArrayElement = 0;
+                descriptorWrites[5].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+                descriptorWrites[5].descriptorCount = 1;
+                descriptorWrites[5].pBufferInfo = &shadowBufferInfo; // the image (the image sampler) to put in the set
+
+                descriptorWrites[6].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                descriptorWrites[6].dstSet = obj.descriptorSets[i];
+                descriptorWrites[6].dstBinding = 6; // the binding in the shader
+                descriptorWrites[6].dstArrayElement = 0;
+                descriptorWrites[6].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+                descriptorWrites[6].descriptorCount = 1;
+                descriptorWrites[6].pBufferInfo = &shadowTransBufferInfo; // the image (the image sampler) to put in the set
+
+                // Update descriptor sets on the device
+                vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
+
+
+              
+
+            }
+
+
+            return obj;
+        
     }
 
     // Automatically creates the descriptor sets.
@@ -1062,7 +1719,46 @@ private:
         samplerLayoutBinding.pImmutableSamplers = nullptr;
         samplerLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT; // When we will use it - the frag shader
 
-        std::array<VkDescriptorSetLayoutBinding, 2> bindings = { uboLayoutBinding, samplerLayoutBinding,  }; // create an array of our bindings
+        VkDescriptorSetLayoutBinding matLayoutBinding{};
+        matLayoutBinding.binding = 2;
+        matLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER; // define it is a uniform buffer
+        matLayoutBinding.descriptorCount = 1;
+        matLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT; // what stage it will be used on
+        matLayoutBinding.pImmutableSamplers = nullptr; // Optional - useful for images
+
+        VkDescriptorSetLayoutBinding transLayoutBinding{};
+        transLayoutBinding.binding = 3;
+        transLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER; // define it is a uniform buffer
+        transLayoutBinding.descriptorCount = 1;
+        transLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT; // what stage it will be used on
+        transLayoutBinding.pImmutableSamplers = nullptr; // Optional - useful for images
+
+                // Create a binding to a sampler, so the shader can access the image from the sampler
+        VkDescriptorSetLayoutBinding offscreenLayoutBinding{};
+        offscreenLayoutBinding.binding = 4; // will be binding 4
+        offscreenLayoutBinding.descriptorCount = 1;
+        offscreenLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; // the type of descriptor
+        offscreenLayoutBinding.pImmutableSamplers = nullptr;
+        offscreenLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT; // When we will use it - the frag shader
+
+        // Holds light MVP info
+        VkDescriptorSetLayoutBinding shadowmapLayoutBinding{};
+        shadowmapLayoutBinding.binding = 5;
+        shadowmapLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER; // define it is a uniform buffer
+        shadowmapLayoutBinding.descriptorCount = 1;
+        shadowmapLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT; // what stage it will be used on
+        shadowmapLayoutBinding.pImmutableSamplers = nullptr; // Optional - useful for images
+
+        // Holds transform info for objects for the shadow shader
+        VkDescriptorSetLayoutBinding shadowTransLayoutBinding{};
+        shadowTransLayoutBinding.binding = 6;
+        shadowTransLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER; // define it is a uniform buffer
+        shadowTransLayoutBinding.descriptorCount = 1;
+        shadowTransLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT; // what stage it will be used on
+        shadowTransLayoutBinding.pImmutableSamplers = nullptr; // Optional - useful for images
+
+
+        std::array<VkDescriptorSetLayoutBinding, 7> bindings = { uboLayoutBinding, samplerLayoutBinding, matLayoutBinding, transLayoutBinding, offscreenLayoutBinding, shadowmapLayoutBinding, shadowTransLayoutBinding }; // create an array of our bindings
 
         // create the descriptor set, take the bindings needed.
         VkDescriptorSetLayoutCreateInfo layoutInfo{};
@@ -1075,11 +1771,14 @@ private:
         }
     }
 
+
+
     // Create a graphics pipeline (This controls shaders, shader inputs, etc). Must be remade for every instance - it is immutable. This loses flexibility for performance.
     void createGraphicsPipeline() {
         // Load the shaders :D
         auto vertShaderCode = readFile("./shaders/vert.spv");
         auto fragShaderCode = readFile("./shaders/frag.spv");
+
 
         // Needed to send the vertex information to vulkan so it knows how to use it, and accept it
         auto bindingDescription = Vertex::getBindingDescription();
@@ -1222,20 +1921,22 @@ private:
         depthStencil.front = {}; // Optional
         depthStencil.back = {}; // Optional
 
-        depthStencil.depthCompareOp = VK_COMPARE_OP_LESS; // keep closer objects, discard further away
+        depthStencil.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL; // keep closer objects, discard further away
 
 
         // Dynamic states can be used to modify some aspects of the pipeline
-        VkDynamicState dynamicStates[] = {
-            VK_DYNAMIC_STATE_VIEWPORT,
-            VK_DYNAMIC_STATE_LINE_WIDTH
-        };
+        std::vector<VkDynamicState> dynamicStates;
+           
+        dynamicStates.push_back(VK_DYNAMIC_STATE_VIEWPORT);
+        dynamicStates.push_back(VK_DYNAMIC_STATE_LINE_WIDTH);
+            
+        
 
         // Create info for the dynamic state
         VkPipelineDynamicStateCreateInfo dynamicState{};
         dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-        dynamicState.dynamicStateCount = 2;
-        dynamicState.pDynamicStates = dynamicStates;
+        dynamicState.dynamicStateCount = dynamicStates.size();
+        dynamicState.pDynamicStates = dynamicStates.data();
 
         
 
@@ -1267,7 +1968,7 @@ private:
         pipelineInfo.pMultisampleState = &multisampling; // pass the multisampling settings
         pipelineInfo.pDepthStencilState = &depthStencil; // Optional - depth stencil settings
         pipelineInfo.pColorBlendState = &colorBlending; // pass our color blending settings
-        pipelineInfo.pDynamicState = nullptr; // Optional
+        pipelineInfo.pDynamicState = &dynamicState; // Optional
 
         // Pass the pipeline layout - It is a vulkan handle rather than a pointer.
         pipelineInfo.layout = pipelineLayout;
@@ -1289,11 +1990,209 @@ private:
         // We can destroy the shader modules once we've made the pipeline, as we no longer need it.
         vkDestroyShaderModule(device, fragShaderModule, nullptr);
         vkDestroyShaderModule(device, vertShaderModule, nullptr);
+
     }
     
+    void createOffscreenGraphicsPipeline() {
+        // Load the shaders :D
+        auto vertShaderCode = readFile("./shaders/shadowVert.spv");
+
+
+        // Needed to send the vertex information to vulkan so it knows how to use it, and accept it
+        auto bindingDescription = Vertex::getBindingDescription();
+        auto attributeDescriptions = Vertex::getAttributeDescriptions();
+
+        // Create the shader modules
+        VkShaderModule vertShaderModule = createShaderModule(vertShaderCode);
+
+        // Create the shader stage - Vertex
+        VkPipelineShaderStageCreateInfo vertShaderStageInfo{};
+        vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO; // standard *sigh&
+        vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT; // tells vulkan what stage of the pipeline this shader will be used in (Vertex)
+
+        vertShaderStageInfo.module = vertShaderModule; // Load the shader into the object
+        vertShaderStageInfo.pName = "main"; // Entry point. This means we can have multiple fragment shaders in one file.
+        vertShaderStageInfo.pSpecializationInfo = nullptr; // allows you to define shader constants - more efficient than setting them at render time.
+
+
+
+
+        VkPipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo }; // put the shaders into an array for later use
+
+
+        // This part lets you define what inputs to send to the vertex shader. This can be very useful!
+        VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
+        vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+        vertexInputInfo.vertexBindingDescriptionCount = 1;
+        vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
+        vertexInputInfo.pVertexBindingDescriptions = &bindingDescription; // binding descriptions from the vertex struct
+        vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data(); // the descriptions from the vertex struct
+
+
+
+        // Topology lets you optimize the shaders by reusing verticies, thus saving storage and render time.
+        VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+        inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+        inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        inputAssembly.primitiveRestartEnable = VK_FALSE;
+
+
+        // The viewport defines what area of the framebuffer to render to. This is almost always (0, 0) and (width, height). We should use the swapchain values in case its different to the screen.
+        VkViewport viewport{};
+        viewport.x = 0.0f;
+        viewport.y = 0.0f;
+        viewport.width = (float)swapChainExtent.width;
+        viewport.height = (float)swapChainExtent.height;
+        viewport.minDepth = 0.0f;
+        viewport.maxDepth = 1.0f;
+
+        // Defines what region pixels will be stored. Any pixels outside of the extent will be discarded.
+        VkRect2D scissor{};
+        scissor.offset = { 0, 0 };
+        scissor.extent = swapChainExtent;
+
+        // Build the viewport and scissor. Some GPUS can support multiple, (See logical device creation) so we pass it as an array.
+        VkPipelineViewportStateCreateInfo viewportState{};
+        viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+        viewportState.viewportCount = 1;
+        viewportState.pViewports = &viewport;
+        viewportState.scissorCount = 1;
+        viewportState.pScissors = &scissor;
+
+
+        // The rasterizer takes info from the vertex shader and creates fragments. It can also do depth testing, face culling and does the scissor.
+        // It can also be configured to do wireframe rendering, or fill polygons.
+        VkPipelineRasterizationStateCreateInfo rasterizer{};
+        rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+        rasterizer.depthClampEnable = VK_FALSE; // anything beyond the near and far will be clamped, not discarded if true. Useful for shadow maps. Requires a feature
+
+
+        rasterizer.rasterizerDiscardEnable = VK_FALSE; // If its set to true, nothing goes through the rasterizer, so nothing gets renderered
+
+        rasterizer.polygonMode = VK_POLYGON_MODE_FILL; // See the main comment. Any other mode required a GPU feature enabled.
+        rasterizer.lineWidth = 1.0f; // any value larger than one requires a feature
+
+        rasterizer.cullMode = VK_CULL_MODE_NONE; // How to cull (Eg, front, back, both, none)
+        rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE; // What vertex order is front (Clockwise/Counter clockwise)
+
+
+        // This can be used for shadow mapping, and typically is, but we dont need it. This can alter the depth values
+        rasterizer.depthBiasEnable = VK_TRUE;
+        rasterizer.depthBiasConstantFactor = 0.0f; // Optional
+        rasterizer.depthBiasClamp = 0.0f; // Optional
+        rasterizer.depthBiasSlopeFactor = 0.0f; // Optional
+
+        // Multisampling - works by combining fragment shader result of multiple polygons on the same pixel to smooth lines. Requires feature
+        VkPipelineMultisampleStateCreateInfo multisampling{};
+        multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+        multisampling.sampleShadingEnable = VK_FALSE;
+        multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+        multisampling.minSampleShading = 1.0f; // Optional
+        multisampling.pSampleMask = nullptr; // Optional
+        multisampling.alphaToCoverageEnable = VK_FALSE; // Optional
+        multisampling.alphaToOneEnable = VK_FALSE; // Optional
+
+        // Once the fragment shader has done its thing, we must blend the colors of pixels together called Color Blending. We can do this by simply mixing, or mixing old and new with bitwise
+        // Very useful if using Alpha (Like transparency)
+        VkPipelineColorBlendAttachmentState colorBlendAttachment{}; // Two options for this - One for per framebuffer, and one for global options
+        colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+        colorBlendAttachment.blendEnable = VK_FALSE; // Don't use color blending
+        colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE; // Optional
+        colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO; // Optional
+        colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD; // Optional
+        colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE; // Optional
+        colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO; // Optional
+        colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD; // Optional
+
+        VkPipelineColorBlendStateCreateInfo colorBlending{};
+        colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+        colorBlending.logicOpEnable = VK_FALSE; // Enable the second option (bitwise) blend. This will disable the above meth
+        colorBlending.logicOp = VK_LOGIC_OP_COPY; // Optional
+        colorBlending.attachmentCount = 0;
+        colorBlending.pAttachments = nullptr;
+        colorBlending.blendConstants[0] = 0.0f; // Optional
+        colorBlending.blendConstants[1] = 0.0f; // Optional
+        colorBlending.blendConstants[2] = 0.0f; // Optional
+        colorBlending.blendConstants[3] = 0.0f; // Optional
+
+
+        // Depth stencil creation
+        VkPipelineDepthStencilStateCreateInfo depthStencil{};
+        depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+        depthStencil.depthTestEnable = VK_TRUE; // enable depth test
+        depthStencil.depthWriteEnable = VK_TRUE; // enable deph write
+        // Optional depth bound test
+        depthStencil.depthBoundsTestEnable = VK_FALSE;
+        depthStencil.minDepthBounds = 0.0f; // Optional
+        depthStencil.maxDepthBounds = 1.0f; // Optional
+        // Stencil buffer  operations
+        depthStencil.stencilTestEnable = VK_FALSE;
+        depthStencil.front = {}; // Optional
+        depthStencil.back = {}; // Optional
+
+        depthStencil.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL; // keep closer objects, discard further away
+        
+
+        // Dynamic states can be used to modify some aspects of the pipeline
+        std::vector<VkDynamicState> dynamicStates;
+
+        dynamicStates.push_back(VK_DYNAMIC_STATE_VIEWPORT);
+        dynamicStates.push_back(VK_DYNAMIC_STATE_SCISSOR);
+        dynamicStates.push_back(VK_DYNAMIC_STATE_LINE_WIDTH);
+        dynamicStates.push_back(VK_DYNAMIC_STATE_DEPTH_BIAS);
+
+
+
+        // Create info for the dynamic state
+        VkPipelineDynamicStateCreateInfo dynamicState{};
+        dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+        dynamicState.dynamicStateCount = dynamicStates.size();
+        dynamicState.pDynamicStates = dynamicStates.data();
+
+
+
+
+        // Create the pipeline info.
+        VkGraphicsPipelineCreateInfo pipelineInfo{};
+        pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+        pipelineInfo.stageCount = 1; // We have two shader stages, vert and frag
+        pipelineInfo.pStages = shaderStages; // pass the shader stages we made in this function
+
+        // Reference everything in the fixed function stage
+        pipelineInfo.pVertexInputState = &vertexInputInfo; // pass the vertex input info (Constant values for the shader)
+        pipelineInfo.pInputAssemblyState = &inputAssembly; // pass the input assembly
+        pipelineInfo.pViewportState = &viewportState; // pass the viewport state 
+        pipelineInfo.pRasterizationState = &rasterizer; // pass the rasterizer
+        pipelineInfo.pMultisampleState = &multisampling; // pass the multisampling settings
+        pipelineInfo.pDepthStencilState = &depthStencil; // Optional - depth stencil settings
+        pipelineInfo.pColorBlendState = &colorBlending; // pass our color blending settings
+        pipelineInfo.pDynamicState = &dynamicState; // Optional
+
+        // Pass the pipeline layout - It is a vulkan handle rather than a pointer.
+        pipelineInfo.layout = pipelineLayout;
+
+        // finally, pass the render pass and the subpass that will be used (In our case, 0 which is the output of the frag shader!!!)
+        pipelineInfo.renderPass = offscreenRenderPass;
+        pipelineInfo.subpass = 0;
+
+        // You can use this to create a pipeline based off another one already made, as it would be less expensive. As we only have one, lets not use it
+        pipelineInfo.basePipelineHandle = VK_NULL_HANDLE; // Optional
+        pipelineInfo.basePipelineIndex = -1; // Optional
+
+
+        // Build it! The VK_NULL_HANDLE can be used to store the pipeline in cache, which can speedup creation times
+        if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &offscreenPipeline) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create graphics pipeline!");
+        }
+
+        // We can destroy the shader modules once we've made the pipeline, as we no longer need it.
+        vkDestroyShaderModule(device, vertShaderModule, nullptr);
+    }
+
     // Create framebuffers, which are the result to send to the render pass, then the GPU
     void createFramebuffers() {
         swapChainFramebuffers.resize(swapChainImageViews.size()); // Resize it to fit the swapchain image views.
+       
 
         // Loop through the swapchain image views
         for (size_t i = 0; i < swapChainImageViews.size(); i++) {
@@ -1317,6 +2216,7 @@ private:
             if (vkCreateFramebuffer(device, &framebufferInfo, nullptr, &swapChainFramebuffers[i]) != VK_SUCCESS) { // Create the framebuffer images.
                 throw std::runtime_error("failed to create framebuffer!");
             }
+
         }
     }
 
@@ -1328,7 +2228,7 @@ private:
         VkCommandPoolCreateInfo poolInfo{};
         poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
         poolInfo.queueFamilyIndex = queueFamilyIndices.graphicsFamily.value();
-        poolInfo.flags = 0; // Optional - can be used to change commands when needed. Flags can be either all change, or individual changes.
+        poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT; // Optional - can be used to change commands when needed. Flags can be either all change, or individual changes.
 
         if (vkCreateCommandPool(device, &poolInfo, nullptr, &commandPool) != VK_SUCCESS) {
             throw std::runtime_error("failed to create command pool!");
@@ -1865,8 +2765,8 @@ private:
     }
 
     // Vertex buffers contain the verticies we will send to the GPU
-    void createVertexBuffer() {
-        VkDeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
+    Object createVertexBuffer(Object obj) {
+        VkDeviceSize bufferSize = sizeof(obj.vertices[0]) * obj.vertices.size();
 
         // The staging buffer is used as a temporary buffer to move values from the CPU to device local memory, then we will move the values to a more optimized type of memory as the CPU cannot access this memory on dGPU
         VkBuffer stagingBuffer;
@@ -1876,23 +2776,25 @@ private:
         // we can now add data to our buffer
         void* data;
         vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
-        memcpy(data, vertices.data(), (size_t)bufferSize);
+        memcpy(data, obj.vertices.data(), (size_t)bufferSize);
         vkUnmapMemory(device, stagingBufferMemory);
 
         // device-local buffer, that is more optimized.
-        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, vertexBuffer, vertexBufferMemory);
+        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, obj.vertexBuffer, obj.vertexBufferMemory);
 
         // Copy the staging buffer to the vertex buffer
-        copyBuffer(stagingBuffer, vertexBuffer, bufferSize);
+        copyBuffer(stagingBuffer, obj.vertexBuffer, bufferSize);
 
         // Make sure to free up the staging buffer afterwards
         vkDestroyBuffer(device, stagingBuffer, nullptr);
         vkFreeMemory(device, stagingBufferMemory, nullptr);
+
+        return obj;
     }
 
     // Nearly identical to createVertexBuffer, except we're using the index buffer. Also the usage of this buffer is index instead of vertex
-    void createIndexBuffer() {
-        VkDeviceSize bufferSize = sizeof(indices[0]) * indices.size();
+    Object createIndexBuffer(Object obj) {
+        VkDeviceSize bufferSize = sizeof(obj.indices[0]) * obj.indices.size();
 
         VkBuffer stagingBuffer;
         VkDeviceMemory stagingBufferMemory;
@@ -1900,15 +2802,17 @@ private:
 
         void* data;
         vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
-        memcpy(data, indices.data(), (size_t)bufferSize);
+        memcpy(data, obj.indices.data(), (size_t)bufferSize);
         vkUnmapMemory(device, stagingBufferMemory);
 
-        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, indexBuffer, indexBufferMemory);
+        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, obj.indexBuffer, obj.indexBufferMemory);
 
-        copyBuffer(stagingBuffer, indexBuffer, bufferSize);
+        copyBuffer(stagingBuffer, obj.indexBuffer, bufferSize);
 
         vkDestroyBuffer(device, stagingBuffer, nullptr);
         vkFreeMemory(device, stagingBufferMemory, nullptr);
+
+        return obj;
     }
 
     // Create the uniform buffers. Very similar to vertex and index, except its an array (As these values can be changed during runtime quite a bit)
@@ -1924,17 +2828,32 @@ private:
         }
     }
 
-    void createMaterialBuffers() {
-       /* VkDeviceSize bufferSize = sizeof(Material);
+    Object createMaterialBuffers(Object obj) {
+       VkDeviceSize bufferSize = sizeof(Material);
 
-        materialBuffers.resize(swapChainImages.size());
-        materialBuffersMemory.resize(swapChainImages.size());
+        obj.materialBuffers.resize(swapChainImages.size());
+        obj.materialBuffersMemory.resize(swapChainImages.size());
 
         for (size_t i = 0; i < swapChainImages.size(); i++) {
             // Create a buffer. We don't use staging as we want to be able to modify this buffer. We will also send data to the memory when we modify it in the drawFrame, so no need to memcpy
-            createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, materialBuffers[i], materialBuffersMemory[i]);
-        }*/
-        
+            createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, obj.materialBuffers[i], obj.materialBuffersMemory[i]);
+        }
+
+        return obj;
+    }
+
+    Object createTransformBuffers(Object obj) {
+        VkDeviceSize bufferSize = sizeof(Transform);
+
+        obj.transformBuffers.resize(swapChainImages.size());
+        obj.transformBuffersMemory.resize(swapChainImages.size());
+
+        for (size_t i = 0; i < swapChainImages.size(); i++) {
+            // Create a buffer. We don't use staging as we want to be able to modify this buffer. We will also send data to the memory when we modify it in the drawFrame, so no need to memcpy
+            createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, obj.transformBuffers[i], obj.transformBuffersMemory[i]);
+        }
+
+        return obj;
     }
     
     // Finds what kind of memory we need to use for the buffer. The different types can change allowed operations/performance.
@@ -1968,9 +2887,16 @@ private:
             throw std::runtime_error("failed to allocate command buffers!");
         }
 
+
+        VkViewport viewport;
+        VkRect2D scissor;
+
+
         // Begin recording command buffers. This means submitting data to them
         for (size_t i = 0; i < commandBuffers.size(); i++) { // loop through them
             VkCommandBufferBeginInfo beginInfo{};
+
+
             beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
             beginInfo.flags = 0; // Optional - defines how we are going to use the buffer - eg rerecording it once we've executed it, or rerecording it while its being executed.
             beginInfo.pInheritanceInfo = nullptr; // Optional - for secondary command buffers to see what state to inherit from primary command buffers.
@@ -1979,8 +2905,77 @@ private:
                 throw std::runtime_error("failed to begin recording command buffer!");
             }
 
-            // Begin the render pass
+
+            // Begin the first render pass - shadow mapping
             VkRenderPassBeginInfo renderPassInfo{};
+            renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+            renderPassInfo.renderPass = offscreenRenderPass; // pass the renderpass
+            renderPassInfo.framebuffer = offscreenFramebuffer; // pass the current framebuffer
+            // This part defines the size of the render area, like a viewport.
+            renderPassInfo.renderArea.offset = { 0, 0 };
+            renderPassInfo.renderArea.extent.width = SHADOWMAP_DIM;
+            renderPassInfo.renderArea.extent.height = SHADOWMAP_DIM;
+            // This defines what values to clear with as we defined in the render pass to clear the screen.
+            std::array<VkClearValue, 2> clearValues = {};
+            clearValues[0].depthStencil = { 1.0f, 0 }; // clear the depth
+            // add it to the built render pass
+            renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
+            renderPassInfo.pClearValues = clearValues.data();
+
+            vkCmdBeginRenderPass(commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+            std::cout << "\n\n\nStarted offscreen render pass\n\n\n";
+
+            viewport = {};
+            viewport.height = SHADOWMAP_DIM;
+            viewport.width = SHADOWMAP_DIM;
+            viewport.minDepth = 0.0f;
+            viewport.maxDepth = 1.0f;
+
+            vkCmdSetViewport(commandBuffers[i], 0, 1, &viewport);
+
+            scissor = {};
+            scissor.extent.height = SHADOWMAP_DIM;
+            scissor.extent.width = SHADOWMAP_DIM;
+            scissor.offset.x = 0.0f;
+            scissor.offset.y = 0.0f;
+
+            vkCmdSetScissor(commandBuffers[i], 0, 1, &scissor);
+            
+            // Set depth bias (aka "Polygon offset")
+            // Required to avoid shadow mapping artifacts
+            vkCmdSetDepthBias(
+                commandBuffers[i],
+                depthBiasConstant,
+                0.0f,
+                depthBiasSlope);
+
+            vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, offscreenPipeline);
+
+            
+            for (Object obj : objects) {
+                vkCmdBindDescriptorSets(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &obj.descriptorSets[i], 0, nullptr);
+                // Send the vertexBuffer through the queue along with the offsets (Which we do not offset). This part binds the buffer to the bindings we setup in the vertex struct.
+                VkBuffer vertexBuffers[] = { obj.vertexBuffer };
+                VkDeviceSize offsets[] = { 0 };
+                vkCmdBindVertexBuffers(commandBuffers[i], 0, 1, vertexBuffers, offsets);
+
+                // bind the index buffer to the command. Similar to vertex, we need the index type (which is controlled by the type up in the const). Can be 16 bit or 32 bit.
+                vkCmdBindIndexBuffer(commandBuffers[i], obj.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+
+                // Tell vulkan to draw a triangle. We pass:
+                // Command buffer
+                // Index count
+                // Instance count - 1 to disable
+                // First index - can be used to offset
+                // first vertex - can be used to offset
+                // first instance - can also be used to offset
+                vkCmdDrawIndexed(commandBuffers[i], static_cast<uint32_t>(obj.indices.size()), 1, 0, 0, 0);
+            }
+            vkCmdEndRenderPass(commandBuffers[i]);
+
+            std::cout << "\n\n\nFinished offscreen render pass\n\n\n";
+            std::cout << "\n\n\nStarted onscreen render pass\n\n\n";
+            // Begin the actual drawing render pass
             renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
             renderPassInfo.renderPass = renderPass; // pass the renderpass
             renderPassInfo.framebuffer = swapChainFramebuffers[i]; // pass the current framebuffer
@@ -1988,50 +2983,67 @@ private:
             renderPassInfo.renderArea.offset = { 0, 0 };
             renderPassInfo.renderArea.extent = swapChainExtent;
             // This defines what values to clear with as we defined in the render pass to clear the screen.
-            std::array<VkClearValue, 2> clearValues{}; // clear values
             clearValues[0].color = { 0.0f, 0.0f, 0.0f, 1.0f }; // clear the screen black
             clearValues[1].depthStencil = { 1.0f, 0 }; // clear the depth
             // add it to the built render pass
             renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
             renderPassInfo.pClearValues = clearValues.data();
+        
 
             // We now begin the render pass, passing the command buffer and the render pass we just did. The last value can control what buffer executes it, whether it is secondary or primary
             vkCmdBeginRenderPass(commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
+            viewport = {};
+            viewport.height = swapChainExtent.height;
+            viewport.width = swapChainExtent.width;
+            viewport.minDepth = 0.0f;
+            viewport.maxDepth = 1.0f;
+
+            vkCmdSetViewport(commandBuffers[i], 0, 1, &viewport);
+
+            scissor = {};
+            scissor.extent.height = swapChainExtent.height;
+            scissor.extent.width = swapChainExtent.width;
+            scissor.offset.x = 0.0f;
+            scissor.offset.y = 0.0f;
+
+            vkCmdSetScissor(commandBuffers[i], 0, 1, &scissor);
+
             // We can now bind the pipeline to the buffer. The second option defines what type of pipeline it is - in our case, graphics. Alternatives include compute.
             vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+            for (Object obj : objects) {
+                // Send the vertexBuffer through the queue along with the offsets (Which we do not offset). This part binds the buffer to the bindings we setup in the vertex struct.
+                VkBuffer vertexBuffers[] = { obj.vertexBuffer };
+                VkDeviceSize offsets[] = { 0 };
+                vkCmdBindVertexBuffers(commandBuffers[i], 0, 1, vertexBuffers, offsets);
 
-            // Send the vertexBuffer through the queue along with the offsets (Which we do not offset). This part binds the buffer to the bindings we setup in the vertex struct.
-            VkBuffer vertexBuffers[] = { vertexBuffer };
-            VkDeviceSize offsets[] = { 0 };
-            vkCmdBindVertexBuffers(commandBuffers[i], 0, 1, vertexBuffers, offsets);
+                // bind the index buffer to the command. Similar to vertex, we need the index type (which is controlled by the type up in the const). Can be 16 bit or 32 bit.
+                vkCmdBindIndexBuffer(commandBuffers[i], obj.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
 
-            // bind the index buffer to the command. Similar to vertex, we need the index type (which is controlled by the type up in the const). Can be 16 bit or 32 bit.
-            vkCmdBindIndexBuffer(commandBuffers[i], indexBuffer, 0, VK_INDEX_TYPE_UINT32);
-
-            // Bind the descriptor sets to the command buffer
-            vkCmdBindDescriptorSets(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[i], 0, nullptr);
-            
+                // Bind the descriptor sets to the command buffer
+                vkCmdBindDescriptorSets(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &obj.descriptorSets[i], 0, nullptr);
 
 
-            // Tell vulkan to draw a triangle. We pass:
-            // Command buffer
-            // Index count
-            // Instance count - 1 to disable
-            // First index - can be used to offset
-            // first vertex - can be used to offset
-            // first instance - can also be used to offset
-            vkCmdDrawIndexed(commandBuffers[i], static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
 
+                // Tell vulkan to draw a triangle. We pass:
+                // Command buffer
+                // Index count
+                // Instance count - 1 to disable
+                // First index - can be used to offset
+                // first vertex - can be used to offset
+                // first instance - can also be used to offset
+                vkCmdDrawIndexed(commandBuffers[i], static_cast<uint32_t>(obj.indices.size()), 1, 0, 0, 0);
+            }
             // We can now end the render pass
             vkCmdEndRenderPass(commandBuffers[i]);
-
+            std::cout << "\n\n\nFinished onscreen render pass\n\n\n";
             // And end the recording of the command buffer
             if (vkEndCommandBuffer(commandBuffers[i]) != VK_SUCCESS) {
                 throw std::runtime_error("failed to record command buffer!");
             }
         }
     }
+
 
     // We need semaphores to tell us when we've got the image from the swapchain and is ready to render, and once we've rendered the image and its ready to be stored
     void createSyncObjects() {
@@ -2072,33 +3084,53 @@ private:
         vkDestroyImage(device, depthImage, nullptr);
         vkFreeMemory(device, depthImageMemory, nullptr);
 
+        vkDestroyImageView(device, shadowImageView, nullptr);
+        vkDestroyImage(device, shadowImage, nullptr);
+        vkFreeMemory(device, shadowImageMemory, nullptr);
+
+        vkDestroyFramebuffer(device, offscreenFramebuffer, nullptr);
+
         for (size_t i = 0; i < swapChainFramebuffers.size(); i++) {
             vkDestroyFramebuffer(device, swapChainFramebuffers[i], nullptr);
+            
         }
 
         vkFreeCommandBuffers(device, commandPool, static_cast<uint32_t>(commandBuffers.size()), commandBuffers.data());
 
         vkDestroyPipeline(device, graphicsPipeline, nullptr);
+        vkDestroyPipeline(device, offscreenPipeline, nullptr);
+
         vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
         vkDestroyRenderPass(device, renderPass, nullptr);
 
         for (size_t i = 0; i < swapChainImageViews.size(); i++) {
             vkDestroyImageView(device, swapChainImageViews[i], nullptr);
         }
+        
+
 
         vkDestroySwapchainKHR(device, swapChain, nullptr);
 
-        /*for (size_t i = 0; i < swapChainImages.size(); i++) {
-            vkDestroyBuffer(device, materialBuffers[i], nullptr);
-            vkFreeMemory(device, materialBuffersMemory[i], nullptr);
-        }*/
+        for (Object obj : objects) {
+            for (size_t i = 0; i < swapChainImages.size(); i++) {
+                vkDestroyBuffer(device, obj.materialBuffers[i], nullptr);
+                vkFreeMemory(device, obj.materialBuffersMemory[i], nullptr);
+            }
+        }
+        
 
        for (size_t i = 0; i < swapChainImages.size(); i++) {
             vkDestroyBuffer(device, uniformBuffers[i], nullptr);
             vkFreeMemory(device, uniformBuffersMemory[i], nullptr);
-        }
-        
-       vkDestroyDescriptorPool(device, descriptorPool, nullptr);
+       }
+       for (size_t i = 0; i < swapChainImages.size(); i++) {
+           vkDestroyBuffer(device, offscreenBuffers[i], nullptr);
+           vkFreeMemory(device, offscreenBuffersMemory[i], nullptr);
+       }
+       for (VkDescriptorPool pool : descriptorPool) {
+            vkDestroyDescriptorPool(device, pool, nullptr);
+       }
+      
     }
 
     // Recreates the swapchain. This can happen for many reasons, like a window getting resized
@@ -2117,15 +3149,20 @@ private:
 
         createSwapChain();
         createImageViews();
+
         createRenderPass();
         createGraphicsPipeline();
+        
         createColorResources();
         createDepthResources();
+        prepareOffscreenFramebuffer();
+        createOffscreenGraphicsPipeline();
         createFramebuffers();
+        createOffscreenBuffer();
         createUniformBuffers();
-        createMaterialBuffers();
-        createDescriptorPool();
-        createDescriptorSets();
+        
+        recreateObjects();
+
         createCommandBuffers();
     }
 
@@ -2300,9 +3337,6 @@ private:
 
         return requiredExtensions.empty();
     }
-
-
-
 };
 
 int main() {
