@@ -128,7 +128,7 @@ void main(void)
 		vec4 shadowCoord = inShadowCoord * depthBias;
 	}
     //float shadowFactor = (usePCF) ? filterPCF(shadowCoord/shadowCoord.w) : textureProj(inShadowCoord/inShadowCoord.w, vec2(0.0f));
-    float shadowFactor = compute_shadow_factor(shadowCoord, shadowMap, 4096, 8);
+    float shadowFactor = compute_shadow_factor(shadowCoord, shadowMap, 4096, 16);
 
     float diffuse = max(0.0, fndotl) + ambient;
     vec3 temp_Color = vec3(diffuse);

@@ -155,7 +155,11 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="Light.cpp" />
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="object.cpp" />
+    <ClCompile Include="Renderer.cpp" />
+    <ClCompile Include="Vertex.cpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="compile.bat" />
@@ -163,6 +167,16 @@
     <None Include="shader.frag" />
     <None Include="shader.vert" />
     <None Include="vert.spv" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="Light.h" />
+    <ClInclude Include="lightTypes.h" />
+    <ClInclude Include="material.h" />
+    <ClInclude Include="object.h" />
+    <ClInclude Include="Renderer.h" />
+    <ClInclude Include="transform.h" />
+    <ClInclude Include="ubo.h" />
+    <ClInclude Include="Vertex.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
