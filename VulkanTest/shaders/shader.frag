@@ -106,6 +106,8 @@ float compute_shadow_factor(vec4 light_space_pos, sampler2D shadow_map, uint sha
       // Check if the sample is in light or in the shadow
       if (light_space_ndc.z <= texture(shadow_map, pcf_coord.xy).x)
          lighted_count += 1.0;
+
+	
    }
  
    return lighted_count / num_samples;
@@ -128,7 +130,7 @@ void main(void)
 		vec4 shadowCoord = inShadowCoord * depthBias;
 	}
     //float shadowFactor = (usePCF) ? filterPCF(shadowCoord/shadowCoord.w) : textureProj(inShadowCoord/inShadowCoord.w, vec2(0.0f));
-    float shadowFactor = compute_shadow_factor(shadowCoord, shadowMap, 4096, 16);
+    float shadowFactor = compute_shadow_factor(shadowCoord, shadowMap, 4096, 8);
 
     float diffuse = max(0.0, fndotl) + ambient;
     vec3 temp_Color = vec3(diffuse);

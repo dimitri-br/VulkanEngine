@@ -4,6 +4,7 @@
 #include "Vertex.h"
 #include "object.h"
 #include "Light.h"
+#include "ubo.h"
 
 const float YAW = -90.0f;
 const float PITCH = 0.0f;
@@ -57,6 +58,7 @@ private:
 
     VkSampleCountFlagBits msaaSamples = VK_SAMPLE_COUNT_1_BIT; // Multisampling. 1 bit is equivillant to nothing
 
+    // So we can apply MSAA to the final image (Smooth out jagged lines). This color image is what gets sent to the GPU
     VkImage colorImage;
     VkDeviceMemory colorImageMemory;
     VkImageView colorImageView;
@@ -73,19 +75,6 @@ private:
 
 
     std::vector<Object> objects;
-
-    std::vector<glm::vec3> cubePositions = {
-        glm::vec3(-5.0f,  -1.0f,  0.0f),
-        glm::vec3(-5.0f,  -2.0f, 0.0f),
-        glm::vec3(-1.5f, 0.2f, -2.5f),
-        glm::vec3(0.0f, 0.0f, 5.3f),
-        glm::vec3(2.4f, -0.4f, -3.5f),
-        glm::vec3(-1.7f,  3.0f, -1.5f),
-        glm::vec3(1.3f, -2.0f, -2.5f),
-        glm::vec3(1.5f,  2.0f, -2.5f),
-        glm::vec3(1.5f,  0.2f, -1.5f),
-        glm::vec3(-1.3f,  1.0f, -1.5f)
-    };
 
 
     // This is stored as an array so if one buffer is in-flight, we don't modify it by mistake.
@@ -144,10 +133,7 @@ private:
 
 
     int cube_index = 0;
-    // Keep depth range as small as possible
-// for better shadow map precision
-    float zNear = 1.0f;
-    float zFar = 96.0f;
+
 
     // Depth bias (and slope) are used to avoid shadowing artifacts
     // Constant depth bias factor (always applied)
@@ -155,7 +141,7 @@ private:
     // Slope depth bias factor, applied depending on polygon's slope
     float depthBiasSlope = 1.75f;
 
-    float lightFOV = 45.0f;
+    
     uboOffscreenVS depthMVP;
     // (Z, X, Y)
 
@@ -208,14 +194,14 @@ private:
     void createImageViews();
 
     void createRenderPass();
-    void prepareOffscreenRenderpass();
-    void prepareOffscreenFramebuffer();
+    void prepareShadowRenderpass();
+    void prepareShadowFramebuffer();
     void createDescriptorPool();
     void createOffscreenBuffer();
     void createDescriptorSets(Object *obj);
     void createDescriptorSetLayout();
     void createGraphicsPipeline();
-    void createOffscreenGraphicsPipeline();
+    void prepareShadowGraphicsPipeline();
     void createFramebuffers();
     void createCommandPool();
     void createDepthResources();
@@ -269,7 +255,7 @@ private:
     void loadModel(Object *obj);
 
     void createObject(std::string model_path, std::string texture_path, glm::vec3 position, glm::vec3 rotation, glm::vec3 scale);
-    void createLight(lightType type, glm::vec3 pos, glm::vec3 rot);
+    void createLight(lightType type, lightUpdate update, glm::vec3 pos, glm::vec3 rot);
     void recreateObjects();
 
     void cleanup();

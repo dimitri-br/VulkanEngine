@@ -8,11 +8,23 @@ class Light
 {
 public:
 	lightType type;
+	lightUpdate update;
 	glm::vec3 position;
 	glm::vec3 rotation;
 
-	void init(lightType lighttype, glm::vec3 pos, glm::vec3 rot);
+	glm::mat4 lightView;
 
+	float lightFOV = 45.0f;
 
+	// Keep depth range as small as possible
+	// for better shadow map precision
+	float zNear = 0.1f;
+	float zFar = 96.0f;
+
+	bool hasRendered = false;
+
+	void init(lightType lighttype, lightUpdate updateRate, glm::vec3 pos, glm::vec3 rot);
+
+	void calculateView();
 };
 

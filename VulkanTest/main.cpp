@@ -26,13 +26,7 @@
 #include <unordered_map> // used to check we aren't adding unnecessary verticies
 #include <glm/gtx/hash.hpp> // used to hash
 
-#include "object.h" // holds local files
-#include "transform.h"
-#include "material.h"
-#include "Vertex.h"
-#include "ubo.h"
-#include "lightTypes.h"
-#include "Light.h"
+
 #include "Renderer.h"
 
 

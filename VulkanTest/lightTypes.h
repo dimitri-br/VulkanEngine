@@ -4,3 +4,8 @@ enum lightType {
     Spot,
     Point // no support yet
 };
+
+enum lightUpdate {
+    Realtime,
+    OnCreate,
+};

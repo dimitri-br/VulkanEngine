@@ -22,15 +22,17 @@
 #include <tiny_obj_loader.h> // load obj
 #include <unordered_map> // used to check we aren't adding unnecessary verticies
 #include <glm/gtx/hash.hpp> // used to hash
+
 #include "object.h" // holds local files
 #include "transform.h"
 #include "material.h"
 #include "Vertex.h"
 #include "ubo.h"
 #include "lightTypes.h"
+#include "Light.h"
 #include "Renderer.h"
 
-#define DEPTH_FORMAT VK_FORMAT_D32_SFLOAT
+#define DEPTH_FORMAT VK_FORMAT_D16_UNORM
 #define DEFAULT_SHADOWMAP_FILTER VK_FILTER_LINEAR
 
 const uint32_t WIDTH = 1920;
@@ -122,13 +124,14 @@ void DestroyDebugUtilsMessengerEXT(VkInstance instance, VkDebugUtilsMessengerEXT
 
 
 
-
+// Run!
 void Renderer::run() {
     initWindow();
     initVulkan();
     mainLoop();
     cleanup();
 }
+
 
 //Initialize window - all required parameters!
 void Renderer::initWindow() {
@@ -333,17 +336,19 @@ void Renderer::initVulkan() {
     createDepthResources();
 
     createFramebuffers();
-    prepareOffscreenFramebuffer();
+    prepareShadowFramebuffer();
 
 
     createGraphicsPipeline(); // Come on!
-    createOffscreenGraphicsPipeline();
+    prepareShadowGraphicsPipeline();
 
 
 
     createOffscreenBuffer();
     createUniformBuffers();
 
+    //createLight(lightType::Spot, lightUpdate::Realtime, glm::vec3(15.0f, 2.0f, -15.0f), glm::vec3(1.0f, 1.0f, 1.0f));
+    createLight(lightType::Directional, lightUpdate::Realtime, glm::vec3(50.0f, 20.0f, -50.0f), glm::vec3(1.0f, 1.0f, 1.0f));
 
 
     createObject("./models/scene.obj", "./textures/texture.png", glm::vec3(0, 0, 0), glm::vec3(0.0f, 1.5708f, 0.0f), glm::vec3(1, 1, 1));
@@ -351,7 +356,7 @@ void Renderer::initVulkan() {
 
     createObject("./models/scene.obj", "./textures/texture.png", glm::vec3(7, 0, 11), glm::vec3(0.0f, 0.5f, 0.0f), glm::vec3(1, 1, 1));
 
-    createLight(lightType::Spot, glm::vec3(-5.0f, 1.0f, -5.0f), glm::vec3(0.0f, 0.0f, 0.0f));
+    
 
     createCommandBuffers();
 
@@ -467,38 +472,9 @@ void Renderer::drawFrame() {
 
 
 void Renderer::updateOffscreenBuffer(uint32_t currentImage) {
-    glm::mat4 depthProjectionMatrix;
-    glm::mat4 depthViewMatrix;
-    glm::mat4 depthModelMatrix = glm::mat4(1.0f);
-    Transform trans{};
 
-
-    switch (light.type) {
-    case Directional:
-        depthProjectionMatrix = glm::ortho(-25.0f, 25.0f, -25.0f, 25.0f, zNear, zFar);
-        depthViewMatrix = glm::lookAt(light.position, glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-        break;
-    case Spot:
-        depthProjectionMatrix = glm::perspective(glm::radians(lightFOV), 1.0f, zNear, zFar);
-        depthViewMatrix = glm::lookAt(light.position, glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-        trans.transform = glm::translate(glm::mat4(1.0f), light.position); // translate the model. vec3 specifies translation. Seems to be (z, x, y)
-        trans.transform *= glm::rotate(glm::mat4(1.0f), light.rotation.x, glm::vec3(1, 0, 0));
-        trans.transform *= glm::rotate(glm::mat4(1.0f), light.rotation.y, glm::vec3(0, 1, 0));
-        trans.transform *= glm::rotate(glm::mat4(1.0f), light.rotation.z, glm::vec3(0, 0, 1)); 
-        
-       // depthModelMatrix = trans.transform;
-        break;
-    case Point:
-        throw std::runtime_error("Error! Point lights are not yet supported");
-        break;
-
-    };
-
-    //
-    depthProjectionMatrix[1][1] *= -1;
-
-    glm::mat4 depthmvp = depthProjectionMatrix * depthViewMatrix * depthModelMatrix;
-    depthMVP.MVP = depthmvp;
+    light.calculateView();
+    depthMVP.MVP = light.lightView;
 
 
 
@@ -518,7 +494,7 @@ void Renderer::updateUniformBuffer(uint32_t currentImage) {
 
 
 
-    lightFOV = 70.0f * sin(time) + 1;
+   // lightFOV = 70.0f * sin(time) + 1;
 
 
     // Create a ubo, then rotate the model Z by 5 radians every second
@@ -636,11 +612,14 @@ void Renderer::loadModel(Object *obj) {
 
 }
 
-void Renderer::createLight(lightType type, glm::vec3 pos, glm::vec3 rot) {
+// Helper function to create a light
+void Renderer::createLight(lightType type, lightUpdate update, glm::vec3 pos, glm::vec3 rot) {
     light = Light();
-    light.init(type, pos, rot);
+    light.init(type, update, pos, rot);
 
 }
+
+// Creates an object and populates it
 void Renderer::createObject(std::string model_path, std::string texture_path, glm::vec3 position, glm::vec3 rotation, glm::vec3 scale) {
     Object obj{};
 
@@ -1061,7 +1040,7 @@ void Renderer::createRenderPass() {
 
 // Set up a separate render pass for the offscreen frame buffer
 // This is necessary as the offscreen frame buffer attachments use formats different to those from the example render pass
-void Renderer::prepareOffscreenRenderpass()
+void Renderer::prepareShadowRenderpass()
 {
     VkAttachmentDescription attachmentDescription{};
     attachmentDescription.format = DEPTH_FORMAT;
@@ -1120,7 +1099,7 @@ void Renderer::prepareOffscreenRenderpass()
 }
 
 // Setup an offscreen framebuffer
-void Renderer::prepareOffscreenFramebuffer()
+void Renderer::prepareShadowFramebuffer()
 {
 
     // For shadow mapping we only need a depth attachment
@@ -1202,7 +1181,7 @@ void Renderer::prepareOffscreenFramebuffer()
         throw std::runtime_error("failed to create shadow sampler!");
     }
 
-    prepareOffscreenRenderpass();
+    prepareShadowRenderpass();
 
     // Create frame buffer
     VkFramebufferCreateInfo fbufCreateInfo{};
@@ -1294,7 +1273,7 @@ void Renderer::createDescriptorSets(Object *obj) {
 
 
     allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    allocInfo.descriptorPool = descriptorPool[obj->instance + 2]; // offset the pool for the offscreen data by the size of objects. Why? So we don't have to reuse pools.
+    allocInfo.descriptorPool = descriptorPool[obj->instance + (descriptorPool.size() / 2)]; //offset the pool for the offscreen data by the size of objects. Why? So we don't have to reuse pools.
     allocInfo.descriptorSetCount = static_cast<uint32_t>(swapChainImages.size());
     allocInfo.pSetLayouts = layouts.data();
 
@@ -1480,8 +1459,6 @@ void Renderer::createDescriptorSetLayout() {
         throw std::runtime_error("failed to create descriptor set layout!");
     }
 }
-
-
 
 // Create a graphics pipeline (This controls shaders, shader inputs, etc). Must be remade for every instance - it is immutable. This loses flexibility for performance.
 void Renderer::createGraphicsPipeline() {
@@ -1703,7 +1680,7 @@ void Renderer::createGraphicsPipeline() {
 
 }
 
-void Renderer::createOffscreenGraphicsPipeline() {
+void Renderer::prepareShadowGraphicsPipeline() {
     // Load the shaders :D
     auto vertShaderCode = readFile("./shaders/shadowVert.spv");
 
@@ -2535,6 +2512,7 @@ void Renderer::createUniformBuffers() {
         createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, uniformBuffers[i], uniformBuffersMemory[i]);
     }
 }
+
 // Create the material buffers for the object
 void Renderer::createMaterialBuffers(Object *obj) {
     VkDeviceSize bufferSize = sizeof(Material);
@@ -2548,6 +2526,7 @@ void Renderer::createMaterialBuffers(Object *obj) {
     }
 
 }
+
 // Create the transform buffers for the object
 void Renderer::createTransformBuffers(Object *obj) {
     VkDeviceSize bufferSize = sizeof(Transform);
@@ -2611,8 +2590,10 @@ void Renderer::createCommandBuffers() {
             throw std::runtime_error("failed to begin recording command buffer!");
         }
 
+        
+        
+        
 
-        // Begin the first render pass - shadow mapping
         VkRenderPassBeginInfo renderPassInfo{};
         renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
         renderPassInfo.renderPass = offscreenRenderPass; // pass the renderpass
@@ -2678,8 +2659,16 @@ void Renderer::createCommandBuffers() {
             vkCmdDrawIndexed(commandBuffers[i], static_cast<uint32_t>(obj.indices.size()), 1, 0, 0, 0);
         }
         vkCmdEndRenderPass(commandBuffers[i]);
+            
+        light.hasRendered = true;
+        
+        
 
-        std::cout << "\n\n\nFinished offscreen render pass\n\n\n";
+        
+
+
+
+
         std::cout << "\n\n\nStarted onscreen render pass\n\n\n";
         // Begin the actual drawing render pass
         renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -2749,7 +2738,6 @@ void Renderer::createCommandBuffers() {
         }
     }
 }
-
 
 // We need semaphores to tell us when we've got the image from the swapchain and is ready to render, and once we've rendered the image and its ready to be stored
 void Renderer::createSyncObjects() {
@@ -2869,8 +2857,8 @@ void Renderer::recreateSwapChain() {
 
     createColorResources();
     createDepthResources();
-    prepareOffscreenFramebuffer();
-    createOffscreenGraphicsPipeline();
+    prepareShadowFramebuffer();
+    prepareShadowGraphicsPipeline();
     createFramebuffers();
     createOffscreenBuffer();
     createUniformBuffers();
@@ -3033,7 +3021,6 @@ void Renderer::populateDebugMessengerCreateInfo(VkDebugUtilsMessengerCreateInfoE
     createInfo.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
     createInfo.pfnUserCallback = debugCallback;
 }
-
 
 // Check if we have all the extensions we need by matching availiable extensions and the ones we defined in the const
 bool Renderer::checkDeviceExtensionSupport(VkPhysicalDevice device) {
