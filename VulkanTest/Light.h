@@ -16,12 +16,20 @@ public:
 
 	float lightFOV = 45.0f;
 
+
 	// Keep depth range as small as possible
 	// for better shadow map precision
-	float zNear = 0.1f;
+	float zNear = 2.0f;
 	float zFar = 96.0f;
 
+	// So we can selectively rerender shadowmaps
 	bool hasRendered = false;
+
+	// Shadowmap stuff
+	VkImage shadowImage;
+	VkDeviceMemory shadowImageMemory;
+	VkImageView shadowImageView;
+	VkSampler shadowSampler;
 
 	void init(lightType lighttype, lightUpdate updateRate, glm::vec3 pos, glm::vec3 rot);
 

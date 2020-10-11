@@ -15,6 +15,8 @@
 #include <glm/glm.hpp> // Needed for math functions like matrices etc
 #include <glm/gtc/matrix_transform.hpp> // transformations
 #include <glm/gtx/rotate_vector.hpp>
+#include <glm/gtx/quaternion.hpp>
+#include <glm/gtc/quaternion.hpp>
 #include <stb_image.h> // Used to import images to be used as textures
 #include <chrono> // Time
 #include <fstream> // Needed to load shaders
@@ -23,6 +25,7 @@
 #include <unordered_map> // used to check we aren't adding unnecessary verticies
 #include <glm/gtx/hash.hpp> // used to hash
 
+#include "Physics.h"
 #include "object.h" // holds local files
 #include "transform.h"
 #include "material.h"
@@ -31,20 +34,15 @@
 #include "lightTypes.h"
 #include "Light.h"
 #include "Renderer.h"
+#include "btBulletDynamicsCommon.h"
+
 
 #define DEPTH_FORMAT VK_FORMAT_D16_UNORM
 #define DEFAULT_SHADOWMAP_FILTER VK_FILTER_LINEAR
 
-const uint32_t WIDTH = 1920;
-const uint32_t HEIGHT = 1080;
-const bool FULLSCREEN = false;
-
-const uint32_t SHADOWMAP_DIM = 4096;
-
+bool firstMouse = true; 
 float lastX = WIDTH / 2.0f;
 float lastY = HEIGHT / 2.0f;
-bool firstMouse = true;
-const float SPEED = 2.5f;
 
 // Hash function for the vertex struct
 namespace std {
@@ -54,7 +52,6 @@ namespace std {
         }
     };
 }
-
 
 
 // Validation layers can be used to debug the app, as vulkan comes with minimal API overhead for speed and effiency. This can help find leaks, errors and more!!!!
@@ -307,6 +304,9 @@ VkExtent2D Renderer::chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabiliti
 
 // Initialize vulkan - run all the boilerplate code needed to setup
 void Renderer::initVulkan() {
+    createPhysics();
+
+
     createInstance(); // See the comment at createInstance
     setupDebugMessenger(); // See comment
     createSurface(); // see comment
@@ -326,8 +326,8 @@ void Renderer::initVulkan() {
 
 
 
-
-
+    //createLight(lightType::Directional, lightUpdate::Realtime, glm::vec3(50.0f, 20.0f, 50.0f), glm::vec3(1.0f, 1.0f, 1.0f));
+    createLight(lightType::Spot, lightUpdate::Realtime, glm::vec3(15.0f, 2.0f, 15.0f), glm::vec3(1.0f, 1.0f, 1.0f));
 
     createCommandPool();
 
@@ -336,7 +336,13 @@ void Renderer::initVulkan() {
     createDepthResources();
 
     createFramebuffers();
-    prepareShadowFramebuffer();
+
+
+
+    prepareShadowFramebuffer(&lights[0]);
+    
+    
+    
 
 
     createGraphicsPipeline(); // Come on!
@@ -347,15 +353,10 @@ void Renderer::initVulkan() {
     createOffscreenBuffer();
     createUniformBuffers();
 
-    //createLight(lightType::Spot, lightUpdate::Realtime, glm::vec3(15.0f, 2.0f, -15.0f), glm::vec3(1.0f, 1.0f, 1.0f));
-    createLight(lightType::Directional, lightUpdate::Realtime, glm::vec3(50.0f, 20.0f, -50.0f), glm::vec3(1.0f, 1.0f, 1.0f));
+    //
+    
 
-
-    createObject("./models/scene.obj", "./textures/texture.png", glm::vec3(0, 0, 0), glm::vec3(0.0f, 1.5708f, 0.0f), glm::vec3(1, 1, 1));
-
-
-    createObject("./models/scene.obj", "./textures/texture.png", glm::vec3(7, 0, 11), glm::vec3(0.0f, 0.5f, 0.0f), glm::vec3(1, 1, 1));
-
+    createObjects();
     
 
     createCommandBuffers();
@@ -363,6 +364,32 @@ void Renderer::initVulkan() {
     createSyncObjects();
 }
 
+void Renderer::createObjects() {
+
+    createObject("./models/cube.obj", "./textures/texture.png", "./textures/texture.png", glm::vec3(0, 7, 0), glm::vec3(0.785398f, 0.0f, 0.785398f), glm::vec3(1, 1, 1), true);
+
+    createObject("./models/cube.obj", "./textures/texture.png", "./textures/texture.png", glm::vec3(2, 7, 0), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(1, 1, 1), true);
+
+    createObject("./models/cube.obj", "./textures/texture.png", "./textures/texture.png", glm::vec3(-2, 5, 0), glm::vec3(0.785398f, 0.0f, 0.0f), glm::vec3(1, 1, 1), true);
+
+    createObject("./models/cube.obj", "./textures/texture.png", "./textures/texture.png", glm::vec3(-2, 8, 0), glm::vec3(0.785398f, 0.0f, 0.785398f), glm::vec3(1, 1, 1), true);
+
+    createObject("./models/cube.obj", "./textures/texture.png", "./textures/texture.png", glm::vec3(0, 9, 0), glm::vec3(0.0f, 0.0f, 0.785398f), glm::vec3(1, 1, 1), true);
+
+    createObject("./models/cube.obj", "./textures/texture.png", "./textures/texture.png", glm::vec3(2, 10, 0), glm::vec3(0.0f, 0.0f, 0.785398f), glm::vec3(1, 1, 1), true);
+
+    createObject("./models/cube.obj", "./textures/texture.png", "./textures/texture.png", glm::vec3(-2, 2, 0), glm::vec3(0.785398f, 0.0f, 0.785398f), glm::vec3(1, 1, 1), true);
+
+    createObject("./models/cube.obj", "./textures/texture.png", "./textures/texture.png", glm::vec3(-2, 15, 0), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(1, 1, 1), true);
+
+    createObject("./models/cube.obj", "./textures/texture.png", "./textures/texture.png", glm::vec3(-2.5, 4, 0), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(1, 1, 1), true);
+
+    createObject("./models/cube.obj", "./textures/texture.png", "./textures/texture.png", glm::vec3(0, 0, 0), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(5, 0.25f, 5), false);
+}
+void Renderer::createPhysics() {
+    physics = Physics(); // create the physics object
+    physics.init(btVector3(0, -9.81f, 0)); // initialize it, set gravity
+}
 //Main loop
 void Renderer::mainLoop() {
 
@@ -370,7 +397,20 @@ void Renderer::mainLoop() {
         glfwPollEvents(); // Loop!
             // Get the time
 
-
+        physics.dynamicsWorld->stepSimulation(1.f / 60.f, 10);
+        //print positions of all objects. Helps to debug if there are any issues.
+        /*for (int j= physics.dynamicsWorld ->getNumCollisionObjects() -1; j>=0 ;j--)  {
+            btCollisionObject* obj = physics.dynamicsWorld ->getCollisionObjectArray()[j];  // get all the collision objects
+            btRigidBody* body = btRigidBody::upcast(obj);  // get the rigidbody for the object
+            btTransform trans; // define a transform
+            if (body && body ->getMotionState()){ 
+                body ->getMotionState()->getWorldTransform(trans); // get transform from the body
+            } 
+            else {
+                trans = obj->getWorldTransform(); // get transform from the object
+            } 
+            printf("world pos object %d = %f,%f,%f\n",j,float(trans.getOrigin().getX()),float( trans.getOrigin().getY()),float(trans.getOrigin().getZ())); //print world pos
+        } */
         drawFrame();
         calculateDeltaTime();
     }
@@ -411,10 +451,11 @@ void Renderer::drawFrame() {
     // Mark the image as now being in use by this frame
     imagesInFlight[imageIndex] = inFlightFences[currentFrame];
 
+    updateTransforms(imageIndex);
     updateOffscreenBuffer(imageIndex);
     updateUniformBuffer(imageIndex);
     updateMaterialBuffer(imageIndex);
-    updateTransforms(imageIndex);
+    
 
 
     // To submit to the command buffer, we need to create submit info
@@ -472,13 +513,7 @@ void Renderer::drawFrame() {
 
 
 void Renderer::updateOffscreenBuffer(uint32_t currentImage) {
-
-    light.calculateView();
-    depthMVP.MVP = light.lightView;
-
-
-
-
+    // All values set on light creation. TODO: add dynamic light movement
     void* sData;
     vkMapMemory(device, offscreenBuffersMemory[currentImage], 0, sizeof(depthMVP), 0, &sData);
     memcpy(sData, &depthMVP, sizeof(depthMVP));
@@ -503,8 +538,9 @@ void Renderer::updateUniformBuffer(uint32_t currentImage) {
 
     ubo.model = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, 0.0f)); // translate the model. vec3 specifies translation. Seems to be (z, x, y)
     //ubo.model *= glm::rotate(glm::mat4(1.0f), time * glm::radians(5.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-
-    ubo.lightPos = light.position;
+    for (Light l : lights) {
+        ubo.lightPos = l.position;
+    }
     ubo.camPos = cameraPos;
 
     ubo.lightSpace = depthMVP.MVP;
@@ -514,8 +550,8 @@ void Renderer::updateUniformBuffer(uint32_t currentImage) {
     // How we look at the world (Useful for 3d)
     // Eye pos, center pos and up axis
     ubo.view = glm::lookAt(cameraPos, cameraPos + cameraFront, cameraUp);
-    //ubo.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-    // Perspective - 45 degre vertical FOV, aspect ratio and near and far planes.
+
+    // Perspective - 45 degree vertical FOV, aspect ratio and near and far planes.
     ubo.proj = glm::perspective(glm::radians(45.0f), swapChainExtent.width / (float)swapChainExtent.height, 0.1f, 100.0f);
 
     // Don't forget to flip Y axis as it was designed for opengl!!!!!
@@ -548,6 +584,9 @@ void Renderer::updateTransforms(uint32_t currentImage) {
     float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count(); // Check how much time has passed
     int i = 0;
     for (Object obj : objects) {
+
+        
+        obj.transform = obj.getTransform(); // set the object transform
 
         // write material to memory
         void* data;
@@ -614,41 +653,72 @@ void Renderer::loadModel(Object *obj) {
 
 // Helper function to create a light
 void Renderer::createLight(lightType type, lightUpdate update, glm::vec3 pos, glm::vec3 rot) {
-    light = Light();
-    light.init(type, update, pos, rot);
+    // Create a light, calculate views, set MVP and send it to the lights vector
+    Light l = Light();
+    l.init(type, update, pos, rot);
+    l.calculateView();
+    lights.push_back(l);
 
+    depthMVP.MVP = l.lightView;
 }
 
 // Creates an object and populates it
-void Renderer::createObject(std::string model_path, std::string texture_path, glm::vec3 position, glm::vec3 rotation, glm::vec3 scale) {
+void Renderer::createObject(std::string model_path, std::string texture_path, std::string normal_path, glm::vec3 position, glm::vec3 rotation, glm::vec3 scale, bool rigidbody) {
+    // Define a new object and material
     Object obj{};
 
     Material mat{};
 
-
+    // material colors. The below randomizes colors, but we default white
     float r = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
     float g = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
     float b = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
     mat.color = { 1.0f, 1.0f, 1.0f };
 
-
+    // shininess for specular (OBSOLETE for now)
     mat.shininess = 1.0f;
 
+    // Transformation info for the object
     Transform trans{};
     trans.transform = glm::translate(glm::mat4(1.0f), position); // translate the model. vec3 specifies translation. Seems to be (z, x, y)
-    trans.transform *= glm::rotate(glm::mat4(1.0f), rotation.x, glm::vec3(1, 0, 0));
-    trans.transform *= glm::rotate(glm::mat4(1.0f), rotation.y, glm::vec3(0, 1, 0));
-    trans.transform *= glm::rotate(glm::mat4(1.0f), rotation.z, glm::vec3(0, 0, 1));
-    trans.transform = glm::scale(trans.transform, scale);
+    trans.transform *= glm::rotate(glm::mat4(1.0f), rotation.x, glm::vec3(1, 0, 0)); // rotate the object X
+    trans.transform *= glm::rotate(glm::mat4(1.0f), rotation.y, glm::vec3(0, 1, 0)); // rotate the object Y
+    trans.transform *= glm::rotate(glm::mat4(1.0f), rotation.z, glm::vec3(0, 0, 1)); // rotate the object Z
+    trans.transform = glm::scale(trans.transform, scale); // scale the object
+
+    
 
 
-    obj.init(model_path, texture_path, mat, trans); // initialize our object
+    //Set default values
+    obj.position = position;
+    obj.rotation = rotation;
+    obj.scale = scale;
+
+    obj.init(model_path, texture_path, normal_path, mat, trans); // initialize our object
+
+    
+    btCollisionShape* collider = new btBoxShape(btVector3(obj.scale.x, obj.scale.y, obj.scale.z));
+    if (rigidbody)
+        obj.setupPhysics(1.0f, collider);
+    else
+        obj.setupPhysics(0.0f, collider);
+    
+        
+    physics.dynamicsWorld->addRigidBody(obj.rigidBody);
+
     obj.instance = objects.size();
 
+    // Create texture image for the object
     createTextureImage(obj.texture_path, &obj);
     createTextureImageView(&obj);
     createTextureSampler(&obj);
 
+    // Create normal image for the object
+    createNormalImage(obj.normal_path, &obj);
+    createNormalImageView(&obj);
+    createNormalSampler(&obj);
+
+    // Begin loading and creating the buffers for the object
     loadModel(&obj);
     std::cout << "Model loaded to obj! \n\n\n";
 
@@ -664,15 +734,16 @@ void Renderer::createObject(std::string model_path, std::string texture_path, gl
     createTransformBuffers(&obj);
     std::cout << "Transform buffer created! \n\n\n";
 
+    // Resize descriptor sets (Make this more dynamic!)
     if (recreateDescriptorSets) {
-        descriptorPool.resize(20);
+        descriptorPool.resize(descriptorSetSize);
         std::cout << "resized pool! \n\n\n";
         createDescriptorPool();
         recreateDescriptorSets = false;
     }
 
-
-    createDescriptorSets(&obj);
+    // Create them!
+    createDescriptorSets(&obj, &lights[0]);
     std::cout << "sets created! \n\n\n";
     objects.push_back(obj);
 
@@ -682,7 +753,7 @@ void Renderer::createObject(std::string model_path, std::string texture_path, gl
 
 void Renderer::recreateObjects() {
     if (recreateDescriptorSets) {
-        descriptorPool.resize(20);
+        descriptorPool.resize(descriptorSetSize);
         std::cout << "resized pool! \n\n\n";
         createDescriptorPool();
         recreateDescriptorSets = false;
@@ -691,7 +762,7 @@ void Renderer::recreateObjects() {
 
         createMaterialBuffers(&obj);
         createTransformBuffers(&obj);
-        createDescriptorSets(&obj);
+        createDescriptorSets(&obj, &lights[0]);
         objects[obj.instance] = obj;
 
     }
@@ -705,8 +776,10 @@ void Renderer::cleanup() {
 
     // destroy our descriptor set
     vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
-
-    vkDestroySampler(device, shadowSampler, nullptr);
+    for (Light l : lights) {
+        vkDestroySampler(device, l.shadowSampler, nullptr);
+    }
+    
     // Destroy the buffer and buffer memory
     for (Object obj : objects) {
         vkDestroyBuffer(device, obj.vertexBuffer, nullptr);
@@ -721,8 +794,23 @@ void Renderer::cleanup() {
         vkDestroyImage(device, obj.textureImage, nullptr);
         vkFreeMemory(device, obj.textureImageMemory, nullptr);
 
+        vkDestroySampler(device, obj.normalSampler, nullptr);
+
+
+        // Destroy the image view
+        vkDestroyImageView(device, obj.normalImageView, nullptr);
+
+        // Destroy the image and the imageMemory
+        vkDestroyImage(device, obj.normalImage, nullptr);
+        vkFreeMemory(device, obj.normalImageMemory, nullptr);
+
         vkDestroyBuffer(device, obj.indexBuffer, nullptr);
         vkFreeMemory(device, obj.indexBufferMemory, nullptr);
+
+        
+        physics.dynamicsWorld->removeCollisionObject(obj.rigidBody);
+        delete obj.collisionShape;
+        delete obj.rigidBody;
     }
 
 
@@ -742,6 +830,10 @@ void Renderer::cleanup() {
 
     vkDestroySurfaceKHR(instance, surface, nullptr);
     vkDestroyInstance(instance, nullptr);
+
+    //cleanup physics objects
+    physics.cleanup();
+
 
     glfwDestroyWindow(window);
 
@@ -909,6 +1001,9 @@ void Renderer::createSwapChain() {
     createInfo.imageExtent = extent;
     createInfo.imageArrayLayers = 1;
     createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT; // This can be used for post-processing. Here, this renders directly
+
+    createInfo.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+    createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
 
     QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
     uint32_t queueFamilyIndices[] = { indices.graphicsFamily.value(), indices.presentFamily.value() };
@@ -1099,7 +1194,7 @@ void Renderer::prepareShadowRenderpass()
 }
 
 // Setup an offscreen framebuffer
-void Renderer::prepareShadowFramebuffer()
+void Renderer::prepareShadowFramebuffer(Light * light)
 {
 
     // For shadow mapping we only need a depth attachment
@@ -1116,14 +1211,14 @@ void Renderer::prepareShadowFramebuffer()
     image.format = DEPTH_FORMAT;		// Depth stencil attachment
     image.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;		// We will sample directly from the depth attachment for the shadow mapping
 
-    if (vkCreateImage(device, &image, nullptr, &shadowImage) != VK_SUCCESS) {
+    if (vkCreateImage(device, &image, nullptr, &light->shadowImage) != VK_SUCCESS) {
         throw std::runtime_error("failed to create offscreen image!");
     }
 
 
     // Get the memory requirements for the image
     VkMemoryRequirements memRequirements;
-    vkGetImageMemoryRequirements(device, shadowImage, &memRequirements);
+    vkGetImageMemoryRequirements(device, light->shadowImage, &memRequirements);
 
     // allocation information for the image. Similar to buffer creation. Select local device for best perfomance
     VkMemoryAllocateInfo allocInfo{};
@@ -1131,11 +1226,11 @@ void Renderer::prepareShadowFramebuffer()
     allocInfo.allocationSize = memRequirements.size;
     allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
-    if (vkAllocateMemory(device, &allocInfo, nullptr, &shadowImageMemory) != VK_SUCCESS) {
+    if (vkAllocateMemory(device, &allocInfo, nullptr, &light->shadowImageMemory) != VK_SUCCESS) {
         throw std::runtime_error("failed to allocate offscreen image memory!");
     }
 
-    if (vkBindImageMemory(device, shadowImage, shadowImageMemory, 0) != VK_SUCCESS) {
+    if (vkBindImageMemory(device, light->shadowImage, light->shadowImageMemory, 0) != VK_SUCCESS) {
         throw std::runtime_error("failed to bind offscreen image memory!");
     }
 
@@ -1150,8 +1245,8 @@ void Renderer::prepareShadowFramebuffer()
     depthStencilView.subresourceRange.levelCount = 1;
     depthStencilView.subresourceRange.baseArrayLayer = 0;
     depthStencilView.subresourceRange.layerCount = 1;
-    depthStencilView.image = shadowImage;
-    if (vkCreateImageView(device, &depthStencilView, nullptr, &shadowImageView) != VK_SUCCESS) {
+    depthStencilView.image = light->shadowImage;
+    if (vkCreateImageView(device, &depthStencilView, nullptr, &light->shadowImageView) != VK_SUCCESS) {
         throw std::runtime_error("failed to create depth stencil image view!");
     }
 
@@ -1177,7 +1272,7 @@ void Renderer::prepareShadowFramebuffer()
     sampler.minLod = 0.0f;
     sampler.maxLod = 1.0f;
     sampler.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
-    if (vkCreateSampler(device, &sampler, nullptr, &shadowSampler) != VK_SUCCESS) {
+    if (vkCreateSampler(device, &sampler, nullptr, &light->shadowSampler) != VK_SUCCESS) {
         throw std::runtime_error("failed to create shadow sampler!");
     }
 
@@ -1188,7 +1283,7 @@ void Renderer::prepareShadowFramebuffer()
     fbufCreateInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
     fbufCreateInfo.renderPass = offscreenRenderPass;
     fbufCreateInfo.attachmentCount = 1;
-    fbufCreateInfo.pAttachments = &shadowImageView;
+    fbufCreateInfo.pAttachments = &light->shadowImageView;
     fbufCreateInfo.width = SHADOWMAP_DIM;
     fbufCreateInfo.height = SHADOWMAP_DIM;
     fbufCreateInfo.layers = 1;
@@ -1204,7 +1299,7 @@ void Renderer::createDescriptorPool() {
     std::cout << descriptorPool.size();
     for (int i = 0; i < descriptorPool.size(); i++) {
         // we have to allocate one pool for every frame, to prevent conflicts while in-flight. Also include all the descriptors we will use
-        std::array<VkDescriptorPoolSize, 6> poolSizes{};
+        std::array<VkDescriptorPoolSize, 8> poolSizes{};
         poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         poolSizes[0].descriptorCount = static_cast<uint32_t>(swapChainImages.size());
 
@@ -1222,6 +1317,12 @@ void Renderer::createDescriptorPool() {
 
         poolSizes[5].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         poolSizes[5].descriptorCount = static_cast<uint32_t>(swapChainImages.size());
+
+        poolSizes[6].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        poolSizes[6].descriptorCount = static_cast<uint32_t>(swapChainImages.size());
+
+        poolSizes[7].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        poolSizes[7].descriptorCount = static_cast<uint32_t>(swapChainImages.size());
 
         // we must specify the max amount of descriptor sets that can be allocated
         VkDescriptorPoolCreateInfo poolInfo{};
@@ -1253,7 +1354,7 @@ void Renderer::createOffscreenBuffer() {
 }
 
 // Create descriptor sets, which can be used by shaders to access buffer data (Like the UBO) or image data.
-void Renderer::createDescriptorSets(Object *obj) {
+void Renderer::createDescriptorSets(Object *obj, Light* light) {
 
     std::vector<VkDescriptorSetLayout> layouts(swapChainImages.size(), descriptorSetLayout);
 
@@ -1272,16 +1373,6 @@ void Renderer::createDescriptorSets(Object *obj) {
 
 
 
-    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    allocInfo.descriptorPool = descriptorPool[obj->instance + (descriptorPool.size() / 2)]; //offset the pool for the offscreen data by the size of objects. Why? So we don't have to reuse pools.
-    allocInfo.descriptorSetCount = static_cast<uint32_t>(swapChainImages.size());
-    allocInfo.pSetLayouts = layouts.data();
-
-    offscreenSet.resize(swapChainImages.size());
-
-    if (vkAllocateDescriptorSets(device, &allocInfo, offscreenSet.data()) != VK_SUCCESS) {
-        throw std::runtime_error("failed to allocate offscreen descriptor sets!");
-    }
 
 
     for (size_t i = 0; i < swapChainImages.size(); i++) {
@@ -1295,6 +1386,7 @@ void Renderer::createDescriptorSets(Object *obj) {
         imageInfo.imageView = obj->textureImageView;
         imageInfo.sampler = obj->textureSampler;
 
+
         VkDescriptorBufferInfo matBufferInfo{};
         matBufferInfo.buffer = obj->materialBuffers[i];
         matBufferInfo.offset = 0;
@@ -1307,8 +1399,8 @@ void Renderer::createDescriptorSets(Object *obj) {
 
         VkDescriptorImageInfo offscreenInfo{};
         offscreenInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-        offscreenInfo.imageView = shadowImageView;
-        offscreenInfo.sampler = shadowSampler;
+        offscreenInfo.imageView = light->shadowImageView;
+        offscreenInfo.sampler = light->shadowSampler;
         //offscreenInfo.sampler = shadowSampler;
 
         VkDescriptorBufferInfo shadowBufferInfo{};
@@ -1321,8 +1413,14 @@ void Renderer::createDescriptorSets(Object *obj) {
         shadowTransBufferInfo.offset = 0;
         shadowTransBufferInfo.range = sizeof(Transform);
 
+
+        VkDescriptorImageInfo imageNormalInfo{};
+        imageNormalInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        imageNormalInfo.imageView = obj->normalImageView;
+        imageNormalInfo.sampler = obj->normalSampler;
+
         // create an array to store our descriptor sets
-        std::array<VkWriteDescriptorSet, 7> descriptorWrites{};
+        std::array<VkWriteDescriptorSet, 8> descriptorWrites{};
 
         descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         descriptorWrites[0].dstSet = obj->descriptorSets[i]; // the set to write to ( we jave one for each frame in the swapchain)
@@ -1370,7 +1468,7 @@ void Renderer::createDescriptorSets(Object *obj) {
         descriptorWrites[5].dstArrayElement = 0;
         descriptorWrites[5].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         descriptorWrites[5].descriptorCount = 1;
-        descriptorWrites[5].pBufferInfo = &shadowBufferInfo; // the image (the image sampler) to put in the set
+        descriptorWrites[5].pBufferInfo = &shadowBufferInfo; // the buffer to put in the set
 
         descriptorWrites[6].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         descriptorWrites[6].dstSet = obj->descriptorSets[i];
@@ -1378,7 +1476,15 @@ void Renderer::createDescriptorSets(Object *obj) {
         descriptorWrites[6].dstArrayElement = 0;
         descriptorWrites[6].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         descriptorWrites[6].descriptorCount = 1;
-        descriptorWrites[6].pBufferInfo = &shadowTransBufferInfo; // the image (the image sampler) to put in the set
+        descriptorWrites[6].pBufferInfo = &shadowTransBufferInfo; // the buffer to put in the set
+
+        descriptorWrites[7].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrites[7].dstSet = obj->descriptorSets[i];
+        descriptorWrites[7].dstBinding = 7; // the binding in the shader
+        descriptorWrites[7].dstArrayElement = 0;
+        descriptorWrites[7].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        descriptorWrites[7].descriptorCount = 1;
+        descriptorWrites[7].pImageInfo = &imageNormalInfo; // the image (the image sampler) to put in the set
 
         // Update descriptor sets on the device
         vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
@@ -1446,8 +1552,14 @@ void Renderer::createDescriptorSetLayout() {
     shadowTransLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT; // what stage it will be used on
     shadowTransLayoutBinding.pImmutableSamplers = nullptr; // Optional - useful for images
 
+    VkDescriptorSetLayoutBinding normalImageBinding{};
+    normalImageBinding.binding = 7; // will be binding 7
+    normalImageBinding.descriptorCount = 1;
+    normalImageBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; // the type of descriptor
+    normalImageBinding.pImmutableSamplers = nullptr;
+    normalImageBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT; // When we will use it - the frag shader
 
-    std::array<VkDescriptorSetLayoutBinding, 7> bindings = { uboLayoutBinding, samplerLayoutBinding, matLayoutBinding, transLayoutBinding, offscreenLayoutBinding, shadowmapLayoutBinding, shadowTransLayoutBinding }; // create an array of our bindings
+    std::array<VkDescriptorSetLayoutBinding, 8> bindings = { uboLayoutBinding, samplerLayoutBinding, matLayoutBinding, transLayoutBinding, offscreenLayoutBinding, shadowmapLayoutBinding, shadowTransLayoutBinding, normalImageBinding }; // create an array of our bindings
 
     // create the descriptor set, take the bindings needed.
     VkDescriptorSetLayoutCreateInfo layoutInfo{};
@@ -2025,6 +2137,58 @@ void Renderer::createTextureImage(std::string path, Object *obj) {
 
 }
 
+// Create a texture from an image. This can be used for well, textures.
+void Renderer::createNormalImage(std::string path, Object* obj) {
+    // Load an image. Store the width, height and channels, and the pixels
+    int texWidth, texHeight, texChannels;
+    stbi_uc* pixels = stbi_load(path.c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha); // Last input forces an alpha channel, even if the image doesn't have one (4 channel)
+
+    mipLevels = static_cast<uint32_t>(std::floor(std::log2(std::max(texWidth, texHeight)))) + 1;
+    // Get the image size so we can make buffers
+    VkDeviceSize imageSize = texWidth * texHeight * 4;
+
+    // If the image is empty, then panic!
+    if (!pixels) {
+        throw std::runtime_error("failed to load texture image!");
+    }
+
+    // Create a staging buffer to load the image into the GPU memory. We use a staging buffer so we can move the image texture data to faster, but cpu-inaccessable memory
+    VkBuffer stagingBuffer;
+    VkDeviceMemory stagingBufferMemory;
+
+    // Create a buffer, where we will use it to transfer bits, and the properties define what properties we want from the memory - something CPU accessable. We also pass the buffer and the memory for the buffer
+    createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+
+    // Next, we map the memory of the memory buffer to the image size, and some empty data
+    void* data;
+    vkMapMemory(device, stagingBufferMemory, 0, imageSize, 0, &data);
+    // We copy pixels to data, so its now in the memory
+    memcpy(data, pixels, static_cast<size_t>(imageSize));
+    // Unmap the memory so we remain memory safe.
+    vkUnmapMemory(device, stagingBufferMemory);
+
+    // Unload the image.
+    stbi_image_free(pixels);
+
+    // Although we can pass the raw pixel data to the shader, it is much better and faster to write it to a texture image.
+    // It allows us to use 2d coordinates. Pixels within an image are known as *texels*
+
+    // Create the image using the parameters we want
+    createImage(texWidth, texHeight, mipLevels, VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, obj->normalImage, obj->normalImageMemory);
+    // Change the layout to the most optimal layout
+    transitionImageLayout(obj->normalImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, mipLevels);
+    // Copy our staging buffer (With the image data) to the image.
+    copyBufferToImage(stagingBuffer, obj->textureImage, static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight));
+
+    // Make it shader readable and generate mipmaps
+    generateMipmaps(obj->normalImage, VK_FORMAT_R8G8B8A8_SRGB, texWidth, texHeight, mipLevels);
+
+    // Destroy our staging buffer
+    vkDestroyBuffer(device, stagingBuffer, nullptr);
+    vkFreeMemory(device, stagingBufferMemory, nullptr);
+
+}
+
 // This function generates mipmaps. Mipmaps help save vram by rendering a lower quality texture when a model is further away
 void Renderer::generateMipmaps(VkImage image, VkFormat imageFormat, int32_t texWidth, int32_t texHeight, uint32_t mipLevels) {
     // Check the properties of the device to make sure we can support mipmapping (linear blitting)
@@ -2386,6 +2550,12 @@ void Renderer::createTextureImageView(Object *obj) {
     obj->textureImageView = createImageView(obj->textureImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, mipLevels);
 
 }
+// create an image view. Graphics pipelines cannot access images directly, and must access an image through a view.
+void Renderer::createNormalImageView(Object* obj) {
+    // Very similar to createImageViews. Just change the image and format to match. No need to define components, as it is set to 0 by default
+    obj->normalImageView = createImageView(obj->normalImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, mipLevels);
+
+}
 
 // Abstraction to create image views
 VkImageView Renderer::createImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags, uint32_t mipLevels) {
@@ -2448,6 +2618,41 @@ void Renderer::createTextureSampler(Object *obj) {
     samplerInfo.mipLodBias = 0.0f; // Optional
 
     if (vkCreateSampler(device, &samplerInfo, nullptr, &obj->textureSampler) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create texture sampler!");
+    }
+
+}
+
+// Samplers can apply fliters to the image to reduce artifacts and create a smoother, nicer image (like bilinear sampling), and they can also apply transformations to a texture, like repeating and clamping
+void Renderer::createNormalSampler(Object* obj) {
+    // Create a sampler
+    VkSamplerCreateInfo samplerInfo{};
+    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    samplerInfo.magFilter = VK_FILTER_LINEAR; // magFilter solves oversampling
+    samplerInfo.minFilter = VK_FILTER_LINEAR; // minFilter solves undersampling
+    // U, V, W are conventional for textures. This defines what to do when going beyond the texture coordinates
+    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+
+
+    // Makes the image sharper at angles
+    samplerInfo.anisotropyEnable = VK_TRUE;
+    samplerInfo.maxAnisotropy = 16.0f;
+
+    samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK; // what color to render if we go beyond the address mode, and its set to clamp
+
+    // Useful for percentage-close filtering, on shadow maps. Texels will be compared to a value which will be used for filtering.
+    samplerInfo.compareEnable = VK_FALSE;
+    samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
+
+    // Mipmapping is another filter we can apply to Textures
+    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    samplerInfo.minLod = 0.0f; // Optional
+    samplerInfo.maxLod = static_cast<float>(mipLevels);
+    samplerInfo.mipLodBias = 0.0f; // Optional
+
+    if (vkCreateSampler(device, &samplerInfo, nullptr, &obj->normalSampler) != VK_SUCCESS) {
         throw std::runtime_error("failed to create texture sampler!");
     }
 
@@ -2638,29 +2843,30 @@ void Renderer::createCommandBuffers() {
 
         vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, offscreenPipeline);
 
+        if (lights[0].update != lightUpdate::OnCreate) {
+            for (Object obj : objects) {
+                vkCmdBindDescriptorSets(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &obj.descriptorSets[i], 0, nullptr);
+                // Send the vertexBuffer through the queue along with the offsets (Which we do not offset). This part binds the buffer to the bindings we setup in the vertex struct.
+                VkBuffer vertexBuffers[] = { obj.vertexBuffer };
+                VkDeviceSize offsets[] = { 0 };
+                vkCmdBindVertexBuffers(commandBuffers[i], 0, 1, vertexBuffers, offsets);
 
-        for (Object obj : objects) {
-            vkCmdBindDescriptorSets(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &obj.descriptorSets[i], 0, nullptr);
-            // Send the vertexBuffer through the queue along with the offsets (Which we do not offset). This part binds the buffer to the bindings we setup in the vertex struct.
-            VkBuffer vertexBuffers[] = { obj.vertexBuffer };
-            VkDeviceSize offsets[] = { 0 };
-            vkCmdBindVertexBuffers(commandBuffers[i], 0, 1, vertexBuffers, offsets);
+                // bind the index buffer to the command. Similar to vertex, we need the index type (which is controlled by the type up in the const). Can be 16 bit or 32 bit.
+                vkCmdBindIndexBuffer(commandBuffers[i], obj.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
 
-            // bind the index buffer to the command. Similar to vertex, we need the index type (which is controlled by the type up in the const). Can be 16 bit or 32 bit.
-            vkCmdBindIndexBuffer(commandBuffers[i], obj.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
-
-            // Tell vulkan to draw a triangle. We pass:
-            // Command buffer
-            // Index count
-            // Instance count - 1 to disable
-            // First index - can be used to offset
-            // first vertex - can be used to offset
-            // first instance - can also be used to offset
-            vkCmdDrawIndexed(commandBuffers[i], static_cast<uint32_t>(obj.indices.size()), 1, 0, 0, 0);
+                // Tell vulkan to draw a triangle. We pass:
+                // Command buffer
+                // Index count
+                // Instance count - 1 to disable
+                // First index - can be used to offset
+                // first vertex - can be used to offset
+                // first instance - can also be used to offset
+                vkCmdDrawIndexed(commandBuffers[i], static_cast<uint32_t>(obj.indices.size()), 1, 0, 0, 0);
+            }
         }
         vkCmdEndRenderPass(commandBuffers[i]);
             
-        light.hasRendered = true;
+        lights[0].hasRendered = true;
         
         
 
@@ -2778,9 +2984,12 @@ void Renderer::cleanupSwapChain() {
     vkDestroyImage(device, depthImage, nullptr);
     vkFreeMemory(device, depthImageMemory, nullptr);
 
-    vkDestroyImageView(device, shadowImageView, nullptr);
-    vkDestroyImage(device, shadowImage, nullptr);
-    vkFreeMemory(device, shadowImageMemory, nullptr);
+    for (Light l : lights) {
+        vkDestroyImageView(device, l.shadowImageView, nullptr);
+        vkDestroyImage(device, l.shadowImage, nullptr);
+        vkFreeMemory(device, l.shadowImageMemory, nullptr);
+    }
+
 
     vkDestroyFramebuffer(device, offscreenFramebuffer, nullptr);
 
@@ -2857,7 +3066,7 @@ void Renderer::recreateSwapChain() {
 
     createColorResources();
     createDepthResources();
-    prepareShadowFramebuffer();
+    prepareShadowFramebuffer(&lights[0]);
     prepareShadowGraphicsPipeline();
     createFramebuffers();
     createOffscreenBuffer();

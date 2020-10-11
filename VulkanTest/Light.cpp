@@ -1,3 +1,5 @@
+#define GLFW_INCLUDE_VULKAN // GLFW vulkan support (Vulkan is an API not window)
+#include <GLFW/glfw3.h> // Windowing
 #include "Light.h"
 #include "transform.h"
 #include <stdexcept>
@@ -23,7 +25,7 @@ void Light::calculateView()
 
     switch (type) {
     case Directional:
-        depthProjectionMatrix = glm::ortho(-25.0f, 25.0f, -25.0f, 25.0f, zNear, zFar);
+        depthProjectionMatrix = glm::ortho(-10.0f, 10.0f, -10.0f, 10.0f, zNear, zFar);
         //depthProjectionMatrix = glm::ortho(-5.0f, 5.0f, -5.0f, 5.0f, zNear, zFar);
         break;
     case Spot:

@@ -1,13 +1,25 @@
 #pragma once
+
 #include "transform.h"
 #include "material.h"
 #include "Vertex.h"
 #include "object.h"
 #include "Light.h"
 #include "ubo.h"
+#include "Physics.h"
+
 
 const float YAW = -90.0f;
 const float PITCH = 0.0f;
+const uint32_t WIDTH = 1920;
+const uint32_t HEIGHT = 1080;
+const bool FULLSCREEN = true;
+
+const uint32_t SHADOWMAP_DIM = 4096;
+
+
+const float SPEED = 2.5f;
+
 
 class Renderer
 {
@@ -68,6 +80,7 @@ private:
 
 
     std::vector<VkDescriptorPool> descriptorPool;
+    int descriptorSetSize = 10; // how many descriptor sets to allocate
 
 
     // Pipeline layouts can be used to send uniform data to shaders. This can be anything from a transformation matrix or textures for a fragment shader.
@@ -75,6 +88,7 @@ private:
 
 
     std::vector<Object> objects;
+    std::vector<Light> lights;
 
 
     // This is stored as an array so if one buffer is in-flight, we don't modify it by mistake.
@@ -97,10 +111,7 @@ private:
     VkPipeline graphicsPipeline;
     VkPipeline offscreenPipeline;
 
-    VkImage shadowImage;
-    VkDeviceMemory shadowImageMemory;
-    VkImageView shadowImageView;
-    VkSampler shadowSampler;
+
 
     uint32_t mipLevels;
 
@@ -120,7 +131,7 @@ private:
     // Camera settings
 
     // Camera rotation
-    glm::vec3 cameraPos = glm::vec3(0.0f, 1.0f, 5.0f);
+    glm::vec3 cameraPos = glm::vec3(0.0f, 2.0f, 10.0f);
     glm::vec3 cameraFront = glm::vec3(0.0f, 0.0f, -1.0f);
     glm::vec3 cameraUp = glm::vec3(0.0f, 1.0f, 0.0f);
 
@@ -146,7 +157,10 @@ private:
     // (Z, X, Y)
 
     //Light, eg sun
-    Light light;
+    //Light light;
+
+    // Physics engine
+    Physics physics;
 
     // This is stored as an array so if one buffer is in-flight, we don't modify it by mistake.
     std::vector<VkBuffer> offscreenBuffers;
@@ -184,6 +198,7 @@ private:
     VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities);
 
     void initVulkan();
+    void createPhysics();
     void recreateSwapChain();
 
     void createInstance();
@@ -195,10 +210,10 @@ private:
 
     void createRenderPass();
     void prepareShadowRenderpass();
-    void prepareShadowFramebuffer();
+    void prepareShadowFramebuffer(Light* light);
     void createDescriptorPool();
     void createOffscreenBuffer();
-    void createDescriptorSets(Object *obj);
+    void createDescriptorSets(Object* obj, Light* light);
     void createDescriptorSetLayout();
     void createGraphicsPipeline();
     void prepareShadowGraphicsPipeline();
@@ -230,8 +245,11 @@ private:
     void createImage(uint32_t width, uint32_t height, uint32_t mipLevels, VkSampleCountFlagBits numSamples, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& imageMemory);
     VkImageView createImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags, uint32_t mipLevels);
     void createTextureImage(std::string path, Object *obj);
-    void createTextureImageView(Object *obj);
-    void createTextureSampler(Object *obj);
+    void createNormalImage(std::string path, Object* obj);
+    void createTextureImageView(Object* obj);
+    void createNormalImageView(Object *obj);
+    void createTextureSampler(Object* obj);
+    void createNormalSampler(Object* obj);
     void transitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout, uint32_t mipLevels);
     void copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height);
     void generateMipmaps(VkImage image, VkFormat imageFormat, int32_t texWidth, int32_t texHeight, uint32_t mipLevels);
@@ -254,7 +272,8 @@ private:
 
     void loadModel(Object *obj);
 
-    void createObject(std::string model_path, std::string texture_path, glm::vec3 position, glm::vec3 rotation, glm::vec3 scale);
+    void createObject(std::string model_path, std::string texture_path, std::string normal_path, glm::vec3 position, glm::vec3 rotation, glm::vec3 scale, bool rigidbody);
+    void createObjects();
     void createLight(lightType type, lightUpdate update, glm::vec3 pos, glm::vec3 rot);
     void recreateObjects();
 

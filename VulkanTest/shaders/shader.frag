@@ -2,6 +2,7 @@
 
 layout(binding = 1) uniform sampler2D texSampler;
 layout(binding = 4) uniform sampler2D shadowMap;
+layout(binding = 7) uniform sampler2D normalSampler;
 
 layout(location = 0) in vec3 fragColor;
 layout(location = 1) in vec2 fragTexCoord;
@@ -115,10 +116,15 @@ float compute_shadow_factor(vec4 light_space_pos, sampler2D shadow_map, uint sha
 
 void main(void)
 {
+	// obtain normal from normal map in range [0,1]
+    //vec3 normal = texture(normalSampler, fragTexCoord).rgb;
+    // transform normal vector to range [-1,1]
+    //normal = normalize(normal * 2.0 - 1.0); 
+
+	vec3 normal = normalize(Normal); 
 	bool usePCF = true;
 
 	vec3 color = texture(texSampler, fragTexCoord).rgb;
-    vec3 normal = normalize(Normal);
 
     vec3 light_Direction = normalize(lightPos - FragPos);
 

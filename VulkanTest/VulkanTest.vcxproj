@@ -124,14 +124,14 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>C:\Users\Dbgamerstarz\Documents\Visual Studio 2019\Libraries\glm;C:\Users\Dbgamerstarz\Documents\Visual Studio 2019\Libraries\glfw-3.3.2.bin.WIN64\include;C:\VulkanSDK\1.2.148.1\Include;C:\Users\Dbgamerstarz\Documents\Visual Studio 2019\Libraries\stb-master;C:\Users\Dbgamerstarz\Documents\Visual Studio 2019\Libraries\other\include;C:\Users\Dbgamerstarz\source\repos\VulkanEngine\VulkanTest\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Users\Dbgamerstarz\Documents\Visual Studio 2019\bullet3-3.06\src;C:\Users\Dbgamerstarz\Documents\Visual Studio 2019\Libraries\glm;C:\Users\Dbgamerstarz\Documents\Visual Studio 2019\Libraries\glfw-3.3.2.bin.WIN64\include;C:\VulkanSDK\1.2.148.1\Include;C:\Users\Dbgamerstarz\Documents\Visual Studio 2019\Libraries\stb-master;C:\Users\Dbgamerstarz\Documents\Visual Studio 2019\Libraries\other\include;C:\Users\Dbgamerstarz\source\repos\VulkanEngine\VulkanTest\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>C:\VulkanSDK\1.2.148.1\Lib;C:\Users\Dbgamerstarz\Documents\Visual Studio 2019\Libraries;C:\Users\Dbgamerstarz\Documents\Visual Studio 2019\Libraries\glfw-3.3.2.bin.WIN64\lib-vc2019;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>vulkan-1.lib;glfw3.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>C:\Users\Dbgamerstarz\Documents\Visual Studio 2019\bullet3-3.06\lib\Debug;C:\VulkanSDK\1.2.148.1\Lib;C:\Users\Dbgamerstarz\Documents\Visual Studio 2019\Libraries;C:\Users\Dbgamerstarz\Documents\Visual Studio 2019\Libraries\glfw-3.3.2.bin.WIN64\lib-vc2017;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>vulkan-1.lib;opengl32.lib;glfw3.lib;LinearMath_Debug.lib;BulletDynamics_Debug.lib;BulletCollision_Debug.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -142,7 +142,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>C:\Users\Dbgamerstarz\Documents\Visual Studio 2019\Libraries\glm;C:\Users\Dbgamerstarz\Documents\Visual Studio 2019\Libraries\glfw-3.3.2.bin.WIN64\include;C:\VulkanSDK\1.2.148.1\Include;C:\Users\Dbgamerstarz\Documents\Visual Studio 2019\Libraries\stb-master;C:\Users\Dbgamerstarz\Documents\Visual Studio 2019\Libraries\other\include;C:\Users\Dbgamerstarz\source\repos\VulkanEngine\VulkanTest\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Users\Dbgamerstarz\Documents\Visual Studio 2019\bullet3-3.06\src;C:\Users\Dbgamerstarz\Documents\Visual Studio 2019\Libraries\glm;C:\Users\Dbgamerstarz\Documents\Visual Studio 2019\Libraries\glfw-3.3.2.bin.WIN64\include;C:\VulkanSDK\1.2.148.1\Include;C:\Users\Dbgamerstarz\Documents\Visual Studio 2019\Libraries\stb-master;C:\Users\Dbgamerstarz\Documents\Visual Studio 2019\Libraries\other\include;C:\Users\Dbgamerstarz\source\repos\VulkanEngine\VulkanTest\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
@@ -150,14 +150,15 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>C:\VulkanSDK\1.2.148.1\Lib;C:\Users\Dbgamerstarz\Documents\Visual Studio 2019\Libraries;C:\Users\Dbgamerstarz\Documents\Visual Studio 2019\Libraries\glfw-3.3.2.bin.WIN64\lib-vc2019;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>vulkan-1.lib;glfw3.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>C:\Users\Dbgamerstarz\Documents\Visual Studio 2019\bullet3-3.06\lib\Release;C:\VulkanSDK\1.2.148.1\Lib;C:\Users\Dbgamerstarz\Documents\Visual Studio 2019\Libraries;C:\Users\Dbgamerstarz\Documents\Visual Studio 2019\Libraries\glfw-3.3.2.bin.WIN64\lib-vc2017;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>vulkan-1.lib;opengl32.lib;glfw3.lib;LinearMath.lib;BulletDynamics.lib;BulletCollision.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="Light.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="object.cpp" />
+    <ClCompile Include="Physics.cpp" />
     <ClCompile Include="Renderer.cpp" />
     <ClCompile Include="Vertex.cpp" />
   </ItemGroup>
@@ -173,6 +174,7 @@
     <ClInclude Include="lightTypes.h" />
     <ClInclude Include="material.h" />
     <ClInclude Include="object.h" />
+    <ClInclude Include="Physics.h" />
     <ClInclude Include="Renderer.h" />
     <ClInclude Include="transform.h" />
     <ClInclude Include="ubo.h" />
